@@ -1,5 +1,10 @@
 # Cruxial
 
+[![tests](https://github.com/cruxial-ai/cruxial/actions/workflows/tests.yml/badge.svg)](https://github.com/cruxial-ai/cruxial/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/cruxial.svg?label=pypi&color=blue)](https://pypi.org/project/cruxial/)
+[![Python](https://img.shields.io/pypi/pyversions/cruxial.svg)](https://pypi.org/project/cruxial/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 **The reliability layer for LLM tool calls.**
 
 Your agent said it sent the email. It didn't.
