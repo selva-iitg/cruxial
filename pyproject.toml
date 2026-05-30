@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cruxial"
+version = "0.1.0"
+description = "The reliability layer for LLM tool calls. Intercepts every call, validates arguments against your schema, auto-repairs hallucinated args before execution."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Cruxial" }]
+keywords = [
+    "llm",
+    "tool-calling",
+    "function-calling",
+    "agents",
+    "openai",
+    "anthropic",
+    "reliability",
+    "schema-validation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "jsonschema>=4.20",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.40"]
+anthropic = ["anthropic>=0.40"]
+mcp = ["mcp>=1.0"]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "openai>=1.40",
+    "anthropic>=0.40",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+cruxial = "cruxial.cli:main"
+
+[project.urls]
+Homepage = "https://cruxial.ai"
+Repository = "https://github.com/cruxial-ai/cruxial"
+Issues = "https://github.com/cruxial-ai/cruxial/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cruxial"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --tb=short"
