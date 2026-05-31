@@ -18,6 +18,43 @@ def _run_stats(db: Path, since: str = "all") -> str:
     return out.stdout
 
 
+def _run_demo(cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "cruxial.cli", "demo"],
+        capture_output=True, text=True, cwd=str(cwd),
+    )
+
+
+def test_demo_runs_offline_and_catches_every_category(tmp_path: Path):
+    """`cruxial demo` works with no API key and shows each failure category caught."""
+    proc = _run_demo(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    # A valid call passes, and each schema-derivable category is demonstrated.
+    assert "valid call" in out
+    for category in (
+        "missing_required",
+        "type_mismatch",
+        "enum_violation",
+        "format_violation",
+        "constraint_violation",
+        "extra_field",
+        "unknown_tool",
+    ):
+        assert category in out, f"demo did not exercise {category}"
+    assert "violation types caught" in out
+    assert "cruxial stats" in out  # points the user at the next step
+
+
+def test_demo_writes_no_telemetry(tmp_path: Path):
+    """The demo must never pollute the user's telemetry — runs on a null sink."""
+    proc = _run_demo(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    # Running from an empty tmp dir, no project-local .cruxial/ should appear.
+    assert not (tmp_path / ".cruxial").exists()
+    assert "0 telemetry rows written" in proc.stdout
+
+
 def test_stats_with_no_traffic_shows_registry_hint(tmp_path: Path, schemas, executors):
     """guard() registers tools → stats shows them even with zero traffic."""
     db = tmp_path / "telemetry.sqlite"

@@ -251,6 +251,7 @@ def test_cli_diagnostic_includes_version_and_db_path(capsys, tmp_path, monkeypat
       - whether that db exists
       - HOW that path was resolved (env var / project-local / home fallback)
     """
+    import cruxial
     from cruxial.cli import main
 
     monkeypatch.setenv("CRUXIAL_DB_PATH", str(tmp_path / "test.sqlite"))
@@ -259,7 +260,7 @@ def test_cli_diagnostic_includes_version_and_db_path(capsys, tmp_path, monkeypat
 
     out = capsys.readouterr().out
     assert "cruxial" in out
-    assert "0.1.0" in out  # version
+    assert cruxial.__version__ in out  # version — read live so a bump won't break this
     assert "db source" in out
     assert "CRUXIAL_DB_PATH" in out  # surface WHY this path was chosen
 

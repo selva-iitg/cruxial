@@ -14,7 +14,7 @@ Last updated: 2026-05-30.
 >
 > Plus 877 production schemas validated synthetically — 100% rejection rate, 98.3% exact-category accuracy, no false negatives.
 >
-> <1ms p99 overhead per call. 243 tests pass. MIT.
+> <1ms p99 overhead per call. 271 tests pass. MIT.
 
 A "silent pass" is the only failure mode a validation layer truly owns. We do not have one.
 
@@ -251,7 +251,8 @@ silently passed              0     ← the only number that matters
 **Reproduce**
 
 ```bash
-python examples/mine_mcp_schemas.py
+# The mined MCP schemas already ship inside the package, so no API keys and
+# no mining step are needed — the audit reads cruxial.demo.MCP_SCHEMAS directly.
 python examples/audit_mcp_schemas.py
 ```
 
@@ -310,13 +311,20 @@ wall clock                  436s
 | `demo_run_sql_query` | `timeout_seconds: 3600` (max 600) — from "1 hour to run" | query killed mid-execution |
 | `demo_deploy_application` | `version: "1.0"` (semver requires `1.0.0`) | deploy fails downstream with less-clear error |
 
-**Reproduce**
+**Reproduce** — use whichever provider you have. `demo_suite.py` auto-detects
+OpenAI or Azure, so a plain `OPENAI_API_KEY` reproduces a number too (the rate
+will differ by model — that variance is the finding, see §C below):
 
 ```bash
-rm ~/.cruxial/telemetry.sqlite
-export AZURE_OPENAI_DEPLOYMENT=gpt-4o   # or your gpt-5-mini deployment
-python examples/azure_demo_suite.py
+# Plain OpenAI (most common):
+export OPENAI_API_KEY=sk-...
+export CRUXIAL_OPENAI_MODEL=gpt-4o        # optional; default gpt-4o-mini
+python examples/demo_suite.py
 cruxial stats --since 30m
+
+# Azure (the exact published run):
+export AZURE_OPENAI_API_KEY=...  AZURE_OPENAI_ENDPOINT=...  AZURE_OPENAI_DEPLOYMENT=gpt-4o
+python examples/demo_suite.py            # or examples/azure_demo_suite.py
 ```
 
 ---

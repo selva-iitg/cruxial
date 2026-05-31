@@ -42,12 +42,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="time window: 1h, 24h, 7d, 30d, all (default: 24h)",
     )
 
+    sub.add_parser(
+        "demo",
+        help="Run a 5-second offline interception demo (no API key needed).",
+    )
+
     p_diag = sub.add_parser("diagnostic", help="Print version + environment info for bug reports.")
 
     args = parser.parse_args(argv)
 
     if args.cmd == "stats":
         return cmd_stats(args.db, args.since)
+    if args.cmd == "demo":
+        return cmd_demo()
     if args.cmd == "diagnostic":
         return cmd_diagnostic()
     parser.print_help()
@@ -202,6 +209,115 @@ def cmd_stats(db_path: Path | None, since: str) -> int:
     print(f"\n  db: {db_path}")
     sink.close()
     return 0
+
+
+def cmd_demo() -> int:
+    """Run an offline interception demo — no API key, no network, no telemetry written.
+
+    Defines one representative tool (``send_email``) whose schema exercises
+    every schema-derivable failure category, then fires a valid call plus one
+    synthetic violation per category and shows Cruxial catching each one. This
+    is the "is it even working?" command a developer runs right after
+    ``pip install cruxial`` to see the SDK do its thing in five seconds.
+    """
+    from cruxial import GuardConfig, guard
+    from cruxial.testing import valid_payload, violation_payloads
+
+    # A representative tool. The constraint surface (email format, enum,
+    # maxLength, additionalProperties:false, required) is what lets the
+    # synthetic generator produce one example per failure category.
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "to": {"type": "string", "format": "email"},
+            "subject": {"type": "string", "maxLength": 200},
+            "body": {"type": "string"},
+            "priority": {"type": "string", "enum": ["low", "normal", "high"]},
+        },
+        "required": ["to", "subject", "body"],
+    }
+
+    def send_email(to, subject, body, priority="normal"):
+        return {"sent": True, "to": to}
+
+    # sinks=("null",) — the demo must never pollute the user's real telemetry.
+    cruxial = guard(
+        schemas={"send_email": schema},
+        executors={"send_email": send_email},
+        config=GuardConfig(sinks=("null",)),
+    )
+
+    bold = lambda t: _ansi(t, "1")
+    green = lambda t: _ansi(t, "32")
+    red = lambda t: _ansi(t, "31")
+    dim = lambda t: _ansi(t, "2")
+    cyan = lambda t: _ansi(t, "36")
+
+    print(bold("\ncruxial · offline demo") + dim("  (no API key — nothing left this machine)"))
+    print("─" * 60)
+    print(dim("tool: send_email(to: email, subject: ≤200 chars, body, priority: low|normal|high)"))
+    print()
+
+    caught = 0
+    total = 0
+
+    # 1. Happy path — a valid call executes and returns the executor's value.
+    happy = valid_payload(schema)
+    total += 1
+    res = cruxial.execute("send_email", happy)
+    if res.ok:
+        print(green("  ✓ valid call      ") + dim(f"→ executed, returned {res.value}"))
+    else:  # pragma: no cover — valid_payload should always satisfy the schema
+        print(red(f"  ✗ valid call unexpectedly blocked: {res.failure.category}"))
+
+    # 2. One synthetic violation per category the schema can express.
+    payloads = violation_payloads(schema)
+    for category, bad_args in payloads.items():
+        total += 1
+        res = cruxial.execute("send_email", bad_args)
+        if not res.ok and res.failure:
+            caught += 1
+            print(red(f"  ✗ {category:<21} ") + dim("→ blocked before execution"))
+            print(dim(f"      {res.failure.message}"))
+        else:  # pragma: no cover
+            print(f"  ? {category:<20} not caught (unexpected)")
+
+    # 3. Unknown tool — a name the registry has never seen.
+    total += 1
+    res = cruxial.execute("delete_database", {"force": True})
+    if not res.ok and res.failure:
+        caught += 1
+        print(red("  ✗ unknown_tool        ") + dim("→ blocked: delete_database is not registered"))
+
+    # 4. Show one repair prompt — the thing you'd feed back to the LLM.
+    fmt_bad = payloads.get("format_violation")
+    if fmt_bad:
+        res = cruxial.execute("send_email", fmt_bad)
+        if not res.ok and res.failure:
+            prompt = cruxial.build_repair_prompt(res.failure, fmt_bad)
+            print()
+            print(cyan("  example repair prompt (sent back to the model on a failure):"))
+            for line in prompt.splitlines():
+                print(dim(f"      │ {line}"))
+
+    print()
+    print("─" * 60)
+    print(bold(f"  {caught}/{total - 1} violation types caught") + dim("  · 1 valid call passed · 0 telemetry rows written"))
+    print()
+    print("  next steps:")
+    print(dim("    • wire your real tools:   ") + "guard(schemas=..., executors=...)")
+    print(dim("    • see your live rate:     ") + "cruxial stats")
+    print(dim("    • full guide:             ") + "https://github.com/cruxial-ai/cruxial#readme")
+    print()
+    return 0
+
+
+def _ansi(text: str, code: str) -> str:
+    """Wrap text in an ANSI color code only when stdout is an interactive TTY."""
+    if not sys.stdout.isatty():
+        return text
+    return f"\033[{code}m{text}\033[0m"
 
 
 def cmd_diagnostic() -> int:

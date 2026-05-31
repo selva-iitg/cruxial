@@ -12,11 +12,18 @@ Your agent said it sent the email. It didn't.
 
 Cruxial intercepts every LLM tool call before it executes, validates arguments
 against your schema, and auto-repairs hallucinated args via a structured retry.
-Drop-in for OpenAI and Anthropic. ~40ms p99. Fail-open by default — if Cruxial
-itself errors, the tool still executes.
+Drop-in for OpenAI and Anthropic. <1ms p99 added overhead — validation is
+local, no extra network hop. Fail-open by default — if Cruxial itself errors,
+the tool still executes.
 
 ```bash
 pip install cruxial
+```
+
+Then watch it catch every failure category live — offline, no API key:
+
+```bash
+cruxial demo
 ```
 
 ## 30-second demo
@@ -92,8 +99,9 @@ if not result.ok:
     result = cruxial.execute(name, new_args)
 ```
 
-Median correction: 1.2 attempts. ~85% one-shot success rate on schema
-violations.
+Roughly **90% of intercepted calls are fixed in a single repair round-trip**
+on the pooled live-MCP benchmark (66–92% across models and schema complexity).
+Every number is sourced in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## See your interception rate
 

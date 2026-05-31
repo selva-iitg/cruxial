@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxial"
-version = "0.1.0"
+version = "0.1.1"
 description = "The reliability layer for LLM tool calls. Intercepts every call, validates arguments against your schema, auto-repairs hallucinated args before execution."
 readme = "README.md"
 license = { text = "MIT" }
