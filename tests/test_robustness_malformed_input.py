@@ -269,7 +269,7 @@ def test_tool_name_with_special_characters_does_not_crash():
 
 def test_registered_tool_name_with_unusual_chars_round_trips():
     """If the consumer registers an unusually-named tool, .check() should still find it."""
-    weird_name = "composio.gmail.send_email"
+    weird_name = "vendor.gmail.send_email"
     cx = guard(
         schemas={weird_name: {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}},
         config=GuardConfig(sinks=("null",)),

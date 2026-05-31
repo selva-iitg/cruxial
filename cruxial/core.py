@@ -266,7 +266,7 @@ class Cruxial:
           - Records a telemetry row in either case, same shape as `.execute()`.
           - Unknown tool name returns ok=False with category="unknown_tool".
             If you don't want Cruxial to flag tools whose schemas aren't
-            registered (e.g. dynamically-discovered MCP / Composio tools),
+            registered (e.g. dynamically-discovered MCP tools),
             guard the call: `if name in cruxial.schemas: cruxial.check(...)`.
         """
         start_ns = time.perf_counter_ns()
@@ -326,7 +326,7 @@ class Cruxial:
     def knows(self, name: str) -> bool:
         """True if a schema is registered for this tool name.
 
-        Useful for dynamic tool registries (MCP / Composio / runtime
+        Useful for dynamic tool registries (MCP / runtime
         discovery) where you only want to check tools Cruxial has seen.
         """
         return name in self.schemas

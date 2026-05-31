@@ -185,17 +185,7 @@ If you need strict email validation, use a custom `pattern` constraint or
 wait for `cruxial[pydantic]` (V0.2) which lets you use Pydantic's
 `EmailStr` directly.
 
-### 5. Composio meta-tool payload validation
-
-Composio exposes meta-tools like `composio_execute(tool_name, params)`.
-Cruxial validates the meta-tool's outer schema but **not** the nested
-`params` against the inner tool's schema (which is fetched on demand).
-
-**Behavior:** the outer `composio_execute` call validates; nested args
-are passed through. This is a documented V0.2 feature (payload-level
-hook for `{tool_name, params}` patterns).
-
-### 6. Tool-bypass detection
+### 5. Tool-bypass detection
 
 If the model writes "I sent the email" without emitting a `tool_calls`
 entry, cruxial never sees the failure. We only validate what's submitted
@@ -205,7 +195,7 @@ to us.
 response mentions tool usage but `tool_calls` is empty. V0.2 will ship a
 heuristic for this.
 
-### 7. Multi-error per call cap at 5
+### 6. Multi-error per call cap at 5
 
 `cruxial.validator.validate()` collects up to **5 violations per call**
 (deduped by `(category, path)`). A pathological schema with 50 violations
@@ -215,7 +205,7 @@ on a single arg gets the first 5; the model is asked to fix those.
 5 is the empirical sweet spot. Override via `validate()` directly if you
 need more (returns a `ValidationResult` with siblings).
 
-### 8. Cross-process telemetry
+### 7. Cross-process telemetry
 
 Each cruxial-using process writes to its own `SqliteSink`. There's no
 multi-process aggregation (cf. Cruxial Cloud, V0.2).
@@ -224,7 +214,7 @@ multi-process aggregation (cf. Cruxial Cloud, V0.2).
 SQLite-WAL mode enabled (we don't enable WAL by default — set
 `PRAGMA journal_mode=WAL` if you need it).
 
-### 9. Auth-aware MCP transport
+### 8. Auth-aware MCP transport
 
 `cruxial.adapters.mcp.import_server_sse(url=...)` doesn't accept HTTP
 headers. If your MCP server is behind auth, you must fetch schemas via
