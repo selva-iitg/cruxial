@@ -4,6 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cruxial.svg?label=pypi&color=blue)](https://pypi.org/project/cruxial/)
 [![Python](https://img.shields.io/pypi/pyversions/cruxial.svg)](https://pypi.org/project/cruxial/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Socket](https://img.shields.io/socket/pypi/cruxial)](https://socket.dev/pypi/package/cruxial)
 
 **The reliability layer for LLM tool calls.**
 
