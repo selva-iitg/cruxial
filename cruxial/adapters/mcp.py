@@ -40,6 +40,69 @@ __all__ = [
 ]
 
 
+# Shell metacharacters. The MCP stdio transport does NOT invoke a shell
+# (no shell=True under the hood), so these are inert at the process layer,
+# but their presence in `command` or `args` is a strong "the caller thinks
+# they're writing a shell command" signal — we reject early with a useful
+# error rather than silently spawning something that won't behave as expected.
+_SHELL_METACHARS = frozenset("|;&`$()<>\n\r")
+
+
+def _validate_command(command: Any) -> None:
+    """Validate the MCP stdio command before spawning a subprocess.
+
+    Defense-in-depth at the cruxial boundary. The actual subprocess.Popen
+    call lives in the underlying ``mcp`` SDK, which already uses
+    ``shell=False``, but adding our own validation here:
+
+      1. Catches obvious caller bugs (None, "", wrong types) with a clean
+         error instead of a confusing crash inside the MCP SDK.
+      2. Refuses shell-style command strings that would silently not behave
+         as expected (since no shell is involved).
+      3. Documents the trust boundary: callers are responsible for ensuring
+         ``command`` and ``args`` come from a trusted source, NOT untrusted
+         user input. This validation does not turn untrusted input into
+         trusted input.
+    """
+    if not isinstance(command, str):
+        raise TypeError(
+            f"MCP stdio command must be a str (e.g. 'npx', 'uvx', '/usr/bin/python3'), "
+            f"got {type(command).__name__}"
+        )
+    if not command.strip():
+        raise ValueError("MCP stdio command must be a non-empty string")
+    bad = sorted(c for c in command if c in _SHELL_METACHARS)
+    if bad:
+        raise ValueError(
+            f"MCP stdio command contains shell metacharacter(s) {bad!r}. "
+            "Cruxial does not invoke a shell to launch MCP servers — these "
+            "characters would not behave as expected. If you need shell "
+            "features (pipes, redirection, env-var expansion), write a small "
+            "wrapper script and use its path as `command`."
+        )
+
+
+def _validate_args(args: Any) -> None:
+    """Validate the MCP stdio args list before passing to the subprocess.
+
+    Same trust-boundary intent as ``_validate_command``. Each arg must be
+    a string; shell metacharacters are allowed (file paths, URLs, JSON
+    fragments routinely contain them) because args are passed positionally
+    via ``execvp`` and never through a shell.
+    """
+    if args is None:
+        return
+    if not isinstance(args, list):
+        raise TypeError(
+            f"MCP stdio args must be a list of str, got {type(args).__name__}"
+        )
+    for i, a in enumerate(args):
+        if not isinstance(a, str):
+            raise TypeError(
+                f"MCP stdio args[{i}] must be str, got {type(a).__name__}"
+            )
+
+
 # ─── async API (preferred) ────────────────────────────────────────────
 
 
@@ -70,11 +133,16 @@ async def import_server_stdio(
         pass directly as ``schemas=`` to ``cruxial.guard()``.
 
     Raises:
+        TypeError: if ``command`` or any item in ``args`` is not a string.
+        ValueError: if ``command`` is empty or contains shell metacharacters
+                    (which cruxial does not interpret — see ``_validate_command``).
         ImportError: if ``mcp`` Python SDK isn't installed.
         TimeoutError: if discovery exceeds ``timeout_seconds``.
         RuntimeError: if the server starts but exposes zero tools.
         Whatever the underlying transport raises on connection failure.
     """
+    _validate_command(command)
+    _validate_args(args)
     _require_mcp_sdk()
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client

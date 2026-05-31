@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from cruxial.adapters.mcp import _extract_schemas, _get_attr_or_key
+from cruxial.adapters.mcp import (
+    _extract_schemas,
+    _get_attr_or_key,
+    _validate_args,
+    _validate_command,
+    import_server_stdio_sync,
+)
 
 
 # ─── _get_attr_or_key ────────────────────────────────────────────────
@@ -96,3 +102,125 @@ def test_require_mcp_sdk_raises_clear_error_when_missing(monkeypatch):
 
     with pytest.raises(ImportError, match=r"pip install.*cruxial\[mcp\]"):
         mcp_adapter._require_mcp_sdk()
+
+
+# ─── Subprocess command/args validation ──────────────────────────────
+#
+# The MCP stdio transport spawns child processes. We harden the trust
+# boundary at the cruxial adapter layer: invalid types, empty strings,
+# and shell metacharacters are rejected BEFORE we ever hand the values
+# to the MCP SDK / subprocess. None of these tests spawn a real process.
+
+
+class TestValidateCommand:
+    """Defense-in-depth tests for _validate_command."""
+
+    def test_accepts_simple_command(self):
+        _validate_command("npx")
+        _validate_command("uvx")
+        _validate_command("/usr/bin/python3")
+        _validate_command("python")
+
+    def test_accepts_command_with_spaces_in_path(self):
+        # spaces are not metacharacters — paths like "/Applications/My App/bin/x"
+        # are valid since args are passed via execvp positionally
+        _validate_command("/Applications/My App/bin/server")
+
+    def test_rejects_none(self):
+        with pytest.raises(TypeError, match="must be a str"):
+            _validate_command(None)
+
+    def test_rejects_list(self):
+        with pytest.raises(TypeError, match="must be a str"):
+            _validate_command(["npx", "-y"])
+
+    def test_rejects_int(self):
+        with pytest.raises(TypeError, match="got int"):
+            _validate_command(42)
+
+    def test_rejects_empty_string(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            _validate_command("")
+
+    def test_rejects_whitespace_only(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            _validate_command("   \t\n  ")
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "npx | tee log",      # pipe
+            "npx ; rm -rf /",     # semicolon
+            "npx && other",       # logical-and
+            "npx `whoami`",       # command substitution (backtick)
+            "npx $(whoami)",      # command substitution
+            "npx > out.txt",      # redirect
+            "npx < in.txt",       # redirect
+            "npx \n other",       # newline injection
+        ],
+    )
+    def test_rejects_shell_metacharacters(self, bad):
+        with pytest.raises(ValueError, match="shell metacharacter"):
+            _validate_command(bad)
+
+    def test_error_message_explains_why(self):
+        """The error should tell the user why their command is rejected
+        and how to legitimately accomplish what they wanted."""
+        with pytest.raises(ValueError) as exc:
+            _validate_command("npx | head")
+        msg = str(exc.value)
+        assert "shell" in msg.lower()
+        assert "wrapper script" in msg.lower()
+
+
+class TestValidateArgs:
+    """args = positional arguments, passed via execvp — metacharacters OK."""
+
+    def test_accepts_none(self):
+        _validate_args(None)
+
+    def test_accepts_empty_list(self):
+        _validate_args([])
+
+    def test_accepts_normal_args(self):
+        _validate_args(["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
+
+    def test_accepts_args_with_special_chars(self):
+        # Pipes, ampersands etc. ARE valid here — args go through execvp,
+        # not a shell. A file path or URL might legitimately contain them.
+        _validate_args(["--url", "https://api.example.com/?key=abc&v=2", "/tmp/dir|with|bars"])
+
+    def test_rejects_non_list(self):
+        with pytest.raises(TypeError, match="must be a list"):
+            _validate_args("not a list")
+
+    def test_rejects_non_string_element(self):
+        with pytest.raises(TypeError, match=r"args\[1\] must be str"):
+            _validate_args(["-y", 42, "/tmp"])
+
+    def test_rejects_none_element(self):
+        with pytest.raises(TypeError, match=r"args\[0\] must be str"):
+            _validate_args([None, "ok"])
+
+
+# ─── Validation fires at the public entry points ─────────────────────
+
+
+class TestPublicEntryPointsValidate:
+    """The validation must run BEFORE we touch the MCP SDK, so the user
+    sees the clean TypeError/ValueError even without `mcp` installed."""
+
+    def test_sync_stdio_entry_validates_before_spawn(self):
+        """Bad command never reaches the subprocess spawn — fails fast."""
+        with pytest.raises(ValueError, match="shell metacharacter"):
+            import_server_stdio_sync(command="npx | tee log")
+
+    def test_sync_stdio_entry_rejects_non_string_command(self):
+        with pytest.raises(TypeError, match="must be a str"):
+            import_server_stdio_sync(command=["npx", "-y"])  # type: ignore[arg-type]
+
+    def test_sync_stdio_entry_rejects_bad_args(self):
+        with pytest.raises(TypeError, match=r"args\[0\] must be str"):
+            import_server_stdio_sync(
+                command="npx", args=[42, "/tmp"]  # type: ignore[list-item]
+            )
