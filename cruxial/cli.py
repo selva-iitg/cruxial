@@ -279,7 +279,7 @@ def cmd_demo() -> int:
         if not res.ok and res.failure:
             caught += 1
             print(red(f"  ✗ {category:<21} ") + dim("→ blocked before execution"))
-            print(dim(f"      {res.failure.message}"))
+            print(dim(f"      {_ellipsize(res.failure.message)}"))
         else:  # pragma: no cover
             print(f"  ? {category:<20} not caught (unexpected)")
 
@@ -298,8 +298,13 @@ def cmd_demo() -> int:
             prompt = cruxial.build_repair_prompt(res.failure, fmt_bad)
             print()
             print(cyan("  example repair prompt (sent back to the model on a failure):"))
-            for line in prompt.splitlines():
-                print(dim(f"      │ {line}"))
+            # Show just the first few lines — enough to convey the shape without
+            # dumping the full schema + args block on a first-run sanity check.
+            lines = prompt.splitlines()
+            for line in lines[:5]:
+                print(dim(f"      │ {_ellipsize(line)}"))
+            if len(lines) > 5:
+                print(dim(f"      │ … (+{len(lines) - 5} more lines — full schema + args sent to the model)"))
 
     print()
     print("─" * 60)
@@ -318,6 +323,20 @@ def _ansi(text: str, code: str) -> str:
     if not sys.stdout.isatty():
         return text
     return f"\033[{code}m{text}\033[0m"
+
+
+def _ellipsize(s: str, max_len: int = 92) -> str:
+    """Middle-truncate a long string, keeping both informative ends.
+
+    Used by the demo so a 250-char `maxLength` violation value doesn't print as
+    a wall of characters — we keep the start AND the trailing context (e.g.
+    `(maxLength=200)`), collapsing the middle.
+    """
+    if len(s) <= max_len:
+        return s
+    head = max_len * 2 // 3
+    tail = max_len - head - 1
+    return f"{s[:head]}…{s[-tail:]}"
 
 
 def cmd_diagnostic() -> int:
