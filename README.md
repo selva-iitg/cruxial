@@ -26,6 +26,8 @@ Then watch it catch every failure category live — offline, no API key:
 cruxial demo
 ```
 
+![cruxial demo catching every failure category offline, then showing the repair prompt](https://raw.githubusercontent.com/cruxial-ai/cruxial/main/assets/cruxial-demo.gif)
+
 ## 30-second demo
 
 ```python
