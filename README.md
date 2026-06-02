@@ -70,6 +70,36 @@ for tool_call in llm_response.tool_calls:
     use(result.value)
 ```
 
+## Or: one call does the whole turn
+
+`guard()` gives you full control. If you write the usual raw-SDK loop, `cruxial.run()`
+does the entire tool step in one call — **call the model, validate every tool call,
+execute the valid ones, auto-repair the bad ones in one round-trip, log, and append
+the results** — for OpenAI / Azure / Anthropic / LiteLLM. You keep your loop:
+
+```python
+import cruxial
+
+result = cruxial.run(
+    client,                 # your OpenAI / AzureOpenAI / Anthropic client, or litellm.completion
+    model="gpt-4o",
+    messages=messages,
+    tools=tools,            # the same tool defs you already pass the LLM
+    executors=executors,    # {tool_name: your_function}
+)
+
+while not result.finished:  # your loop stays yours — one model call per turn
+    result = cruxial.run(client, model="gpt-4o", messages=result.messages,
+                         tools=tools, executors=executors)
+
+print(result.text)          # the model's final answer
+```
+
+It reuses your already-configured client (Azure endpoint/version, base_url, timeouts —
+all preserved), derives schemas from `tools`, and fails open. It is deliberately **one
+turn, not a framework**: no streaming, no multi-turn ownership — you decide when to stop.
+Need to own execution yourself? Drop to `guard().check()` / `.execute()`.
+
 ## What it catches
 
 Seven schema-derivable failure categories. Every interception is logged with

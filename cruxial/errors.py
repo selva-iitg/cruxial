@@ -45,3 +45,12 @@ class ExecutorError(CruxialError):
         self.tool = tool
         self.original = original
         super().__init__(f"executor for {tool!r} raised {type(original).__name__}: {original}")
+
+
+class ProviderUnsupported(CruxialError):
+    """`cruxial.run()` couldn't recognise the client as a supported provider.
+
+    Raised by the managed-turn helper when it can't map the client to an
+    OpenAI / Azure / Anthropic / LiteLLM-compatible call shape. Drop down to
+    ``guard().check()`` / ``.execute()`` to integrate manually.
+    """

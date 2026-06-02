@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 from cruxial.core import Cruxial, GuardConfig, NoopCruxial, guard
+from cruxial.run import RunResult, run
 from cruxial.lint import (
     LintIssue,
     lint_schema,
@@ -16,6 +17,7 @@ from cruxial import demo  # importable as `from cruxial import demo`; module-lev
 from cruxial.errors import (
     CruxialError,
     ExecutorError,
+    ProviderUnsupported,
     RepairExhausted,
     SchemaViolation,
     ToolUnknown,
@@ -35,6 +37,9 @@ __all__ = [
     "Cruxial",
     "NoopCruxial",
     "GuardConfig",
+    # Managed turn
+    "run",
+    "RunResult",
     # Schema linter
     "LintIssue",
     "lint_schema",
@@ -55,4 +60,5 @@ __all__ = [
     "ToolUnknown",
     "RepairExhausted",
     "ExecutorError",
+    "ProviderUnsupported",
 ]

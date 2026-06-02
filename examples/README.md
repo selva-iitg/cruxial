@@ -14,6 +14,7 @@ for the full list.
 |---|---|---|---|
 | **`mock_demo.py`** | nothing (offline) | free · instant | Simulated model emits one broken call per failure category; each is intercepted, classified, and the repair prompt is printed. The fastest way to see the full pipeline. |
 | **`audit_mcp_schemas.py`** | nothing (offline) | free · seconds | Synthetic classifier audit over the shipped real-world MCP schemas — reproduces the "98.3% exact-category, 0 silent passes" robustness number with no LLM. |
+| **`run_demo.py`** ⭐ | any one provider key (OpenAI / Azure / Anthropic) | ~$ · seconds | **The `cruxial.run` one-call managed turn.** Define tools + executors, then `run` does call → validate → execute → auto-repair → log → append, one turn at a time. The "insanely easy" drop-in. Auto-detects your provider. |
 | **`demo_suite.py`** ⭐ | `OPENAI_API_KEY` **or** Azure trio | ~$ · ~10 min | **Provider-agnostic benchmark.** Runs the 15-tool demo registry through a live model and prints intercept + auto-repair rates. This is the script to reproduce the headline BENCHMARKS.md numbers with whatever key you have. |
 | `openai_demo.py` | `OPENAI_API_KEY` | ~$ · seconds | Single-prompt OpenAI agent loop: intercept → 1-shot auto-repair → execute. |
 | `anthropic_demo.py` | `ANTHROPIC_API_KEY` | ~$ · seconds | Same loop, Anthropic Messages API. |

@@ -14,7 +14,7 @@ Last updated: 2026-05-30.
 >
 > Plus 877 production schemas validated synthetically — 100% rejection rate, 98.3% exact-category accuracy, no false negatives.
 >
-> <1ms p99 overhead per call. 271 tests pass. MIT.
+> <1ms p99 overhead per call. 282 tests pass. MIT.
 
 A "silent pass" is the only failure mode a validation layer truly owns. We do not have one.
 
