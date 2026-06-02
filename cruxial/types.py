@@ -20,6 +20,7 @@ FailureCategory = Literal[
     "constraint_violation",
     "extra_field",
     "unknown_tool",
+    "tool_bypass",  # model claimed an action in prose but emitted no matching tool call
 ]
 
 

@@ -2,7 +2,7 @@
 
 Every number in this document is reproducible from the public repo. Each run lists its model, sample, command, and date. No unsourced claims — if it isn't here, don't cite it.
 
-Last updated: 2026-05-30.
+Last updated: 2026-06-02.
 
 ---
 
@@ -14,7 +14,7 @@ Last updated: 2026-05-30.
 >
 > Plus 877 production schemas validated synthetically — 100% rejection rate, 98.3% exact-category accuracy, no false negatives.
 >
-> <1ms p99 overhead per call. 282 tests pass. MIT.
+> <1ms p99 overhead per call. 309 tests pass. MIT.
 
 A "silent pass" is the only failure mode a validation layer truly owns. We do not have one.
 
@@ -92,7 +92,7 @@ During the live MCP runs, 9 of 176 calls failed at OpenAI's tool-registration st
 
 **What "intercepted" means.** The validator caught a schema violation BEFORE the executor ran. The executor never fires on an intercept; the host decides whether to attempt repair.
 
-**What "passed" means.** The model emitted args that satisfied the JSON Schema. It does NOT mean the call was semantically correct — only that the args are well-formed. Tool-bypass failures (model claims to have called a tool but didn't) are out of scope for V0.1.
+**What "passed" means.** The model emitted args that satisfied the JSON Schema. It does NOT mean the call was semantically correct — only that the args are well-formed. The separate **tool-bypass** failure mode (the model claims an action but emits no call) is measured in Section F.
 
 **What "silent pass" means.** A payload that should have been rejected but wasn't. This is the only true failure mode of a validation layer. We track and report it on every run.
 
@@ -396,6 +396,34 @@ Simple MCP-style schemas (`{path: string}`, `{query: string}`) are trivially sat
 Put together with section A's 4.7–7.0% on the full real MCP corpus and section C's 17.1% on constraint-heavy schemas, the story crystallises:
 
 > *Cruxial's intercept rate is approximately a function of your tool schemas' constraint surface. Simple shapes: ~0%. Real production MCP servers: 5–7%. Constraint-rich production schemas: 15–20%. As your tool surface gets harder, the value gets larger.*
+
+---
+
+## F. Tool-bypass · the claimed-but-never-called catch
+
+The failure mode validators structurally cannot catch: the model writes "I've sent the email" and emits **no** tool call. `cruxial.run()` flags it locally (completion-form verb, attributed to the assistant, side-effecting tool never called), then issues ONE neutral re-prompt. We act **only** on a model-confirmed re-emission — so a false flag never fabricates an action.
+
+**Adversarial set:** 132 hand-built scenarios — 60 real bypasses (varied tools, terse/passive/contraction phrasings) + 72 false suspects, including deliberate sycophancy traps (action attributed to *you*, a *scheduler*, *automation*, or a third-party *person*). The local filter suppresses 48 of the false suspects for free (never reach a re-prompt); the rest exercise the re-prompt.
+
+| Model | Correction recall | **Acted-on precision** | False actions |
+|---|---|---|---|
+| Anthropic claude-sonnet-4-6 | **100%** (60/60) · 95% CI 94–100 | **100.0%** (60/60) · 95% CI 94–100 | **0** |
+| Azure gpt-4o | **100%** (60/60) · 95% CI 94–100 | **98.4%** (60/61) · 95% CI 91.3–99.7 | **1** |
+
+- **Correction recall** = of real bypasses, how many the re-prompt recovered (the model re-emitted and it executed).
+- **Acted-on precision** = of the calls we *acted on*, how many were true bypasses. This is the safety number — a false action means a fabricated/duplicated side effect.
+- The single gpt-4o false action is a third-party-**person** attribution ("my colleague already created the ticket") — the one case the local filter can't disambiguate. Kept in the set on purpose; it's the honest residual.
+
+**Cost:** zero extra model calls on a normal turn (correct agents call the tool, so completion claims are backed → not flagged). One extra call only on a flagged suspect.
+
+**Reproduce**
+
+```bash
+export AZURE_OPENAI_API_KEY=...  AZURE_OPENAI_ENDPOINT=...  AZURE_OPENAI_DEPLOYMENT=gpt-4o
+export ANTHROPIC_API_KEY=sk-ant-...
+python examples/bypass_eval.py        # offline: the local detector (no keys, no cost)
+python examples/bypass_live_eval.py   # live: acted-on precision + recall, both providers
+```
 
 ---
 

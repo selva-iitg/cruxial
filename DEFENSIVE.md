@@ -185,15 +185,29 @@ If you need strict email validation, use a custom `pattern` constraint or
 wait for `cruxial[pydantic]` (V0.2) which lets you use Pydantic's
 `EmailStr` directly.
 
-### 5. Tool-bypass detection
+### 5. Tool-bypass detection — handled in `cruxial.run()`, with limits
 
-If the model writes "I sent the email" without emitting a `tool_calls`
-entry, cruxial never sees the failure. We only validate what's submitted
-to us.
+When the model writes "I sent the email" but emits **no** `tool_calls`, there
+is nothing to schema-validate. `cruxial.run()` catches this: a final text turn
+is flagged by a local, zero-cost filter (completion-form verb, attributed to
+the assistant, side-effecting tool never called), then ONE neutral re-prompt
+decides — the model re-emits the call (corrected + executed) or declines (no
+action). We only act on a model-confirmed re-emission, so a false flag never
+fabricates an action.
 
-**Workaround:** at the agent-loop level, check whether the model's
-response mentions tool usage but `tool_calls` is empty. V0.2 will ship a
-heuristic for this.
+Benchmarked (132 adversarial scenarios): 100% correction recall, acted-on
+precision 100% (Claude sonnet-4-6) / 98.4% (gpt-4o).
+
+**Known limits (honest):**
+- Detection is English, heuristic — colloquialisms ("pushed it live") and
+  verb-synonym gaps can be missed (recall, not safety).
+- It distinguishes the *assistant* from *you* / a *scheduler* / *automation*,
+  but **cannot** tell a third-party **person** apart ("my colleague sent it") —
+  the lone residual false-action source on sycophantic models.
+- It only works in the `run()` path (it needs the assistant text). The bare
+  `guard().execute()` path can't see the prose, so it can't detect bypass.
+- Disable with `bypass="off"`; `bypass="strict"` is an opt-in 2-call variant
+  (not recommended — empirically worse on sycophantic models).
 
 ### 6. Multi-error per call cap at 5
 

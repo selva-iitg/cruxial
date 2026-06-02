@@ -173,6 +173,98 @@ def test_openai_intercept_no_repair_surfaces_failure():
     assert len(client.calls) == 1                     # no repair round-trip
 
 
+# ─── tests: tool_bypass (claim-without-call) ────────────────────────────────
+
+
+def test_bypass_confirmed_gets_corrected():
+    ex, sent = _executors()
+    client = FakeOpenAI([
+        _oai_text("I've sent the email to a@b.com."),                  # claim, no call
+        _oai_toolcall({"to": "a@b.com", "subject": "hi", "body": "yo"}),  # re-prompt → re-emits
+    ])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "email a@b.com"}],
+            tools=OPENAI_TOOLS, executors=ex, config=NULL)
+    assert r.bypass is not None and r.bypass.tool == "send_email"
+    assert r.finished is False           # the corrected call means the turn isn't done
+    assert sent == ["a@b.com"]            # the tool actually ran after correction
+    assert r.stats["bypass"] == 1
+    assert len(client.calls) == 2         # original + one neutral re-prompt
+
+
+def test_bypass_denied_returns_reply_unchanged():
+    ex, sent = _executors()
+    client = FakeOpenAI([
+        _oai_text("I've sent the email."),                              # suspect
+        _oai_text("Actually I haven't — I still need the address."),    # denial on re-prompt
+    ])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "x"}],
+            tools=OPENAI_TOOLS, executors=ex, config=NULL)
+    assert r.bypass is None               # not acted on
+    assert r.finished is True
+    assert sent == []                     # NO fabricated action
+    assert len(client.calls) == 2         # it did re-prompt (was suspect)
+
+
+def test_bypass_off_skips_the_reprompt():
+    ex, sent = _executors()
+    client = FakeOpenAI([_oai_text("I've sent the email.")])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "x"}],
+            tools=OPENAI_TOOLS, executors=ex, bypass="off", config=NULL)
+    assert r.bypass is None and r.finished is True
+    assert len(client.calls) == 1         # no extra call when disabled
+
+
+def test_benign_final_reply_costs_no_extra_call():
+    ex, _ = _executors()
+    client = FakeOpenAI([_oai_text("Here's a summary of your open tasks.")])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "x"}],
+            tools=OPENAI_TOOLS, executors=ex, config=NULL)
+    assert r.bypass is None and r.finished is True
+    assert len(client.calls) == 1         # not suspect → zero overhead
+
+
+def test_strict_bypass_confirmed_judges_then_forces_emit():
+    ex, sent = _executors()
+    client = FakeOpenAI([
+        _oai_text("I've sent the email to a@b.com."),                    # claim, no call
+        _oai_text("NEEDED"),                                             # no-tool judgment
+        _oai_toolcall({"to": "a@b.com", "subject": "hi", "body": "yo"}),  # forced emit
+    ])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "email a@b.com"}],
+            tools=OPENAI_TOOLS, executors=ex, bypass="strict", config=NULL)
+    assert r.bypass is not None
+    assert sent == ["a@b.com"]
+    assert len(client.calls) == 3        # turn + judgment + forced emit
+
+
+def test_strict_bypass_judged_done_takes_no_action():
+    ex, sent = _executors()
+    client = FakeOpenAI([
+        _oai_text("My colleague sent the email earlier today."),         # suspect (3rd-party person)
+        _oai_text("DONE"),                                               # judgment → already done
+    ])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "status?"}],
+            tools=OPENAI_TOOLS, executors=ex, bypass="strict", config=NULL)
+    assert r.bypass is None
+    assert sent == []                    # no fabricated/duplicate action
+    assert len(client.calls) == 2        # turn + judgment, NO forced emit
+
+
+def test_bypass_not_flagged_when_tool_was_called_earlier():
+    ex, _ = _executors()
+    client = FakeOpenAI([_oai_text("I've sent the email.")])
+    prior = [
+        {"role": "user", "content": "email a@b.com"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "x", "type": "function", "function": {"name": "send_email", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "x", "content": "{}"},
+        {"role": "user", "content": "did it go?"},
+    ]
+    r = run(client, model="gpt-4o", messages=prior, tools=OPENAI_TOOLS, executors=ex, config=NULL)
+    assert r.bypass is None and r.finished is True
+    assert len(client.calls) == 1         # send_email was already called → not suspect
+
+
 # ─── tests: provider guards ─────────────────────────────────────────────────
 
 

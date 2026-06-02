@@ -102,8 +102,8 @@ Need to own execution yourself? Drop to `guard().check()` / `.execute()`.
 
 ## What it catches
 
-Seven schema-derivable failure categories. Every interception is logged with
-the failure category — never the raw argument values.
+Eight failure categories. Every interception is logged with the failure
+category — never the raw argument values.
 
 | Category | What it catches |
 |---|---|
@@ -114,8 +114,35 @@ the failure category — never the raw argument values.
 | `constraint_violation` | maxLength / minimum / pattern / etc. |
 | `extra_field` | Model invented a field that doesn't exist |
 | `unknown_tool` | Tool name not in registry |
+| `tool_bypass` | **Model *claimed* it did something but emitted no call** — "your agent said it sent the email. It didn't." |
 
-`tool_bypass` (model claims it called a tool but didn't) ships in v0.2.
+The first seven are schema-derivable. **`tool_bypass`** is the one validators
+structurally can't catch — there's no call to validate. See below.
+
+## tool_bypass — catch the action your agent claimed but never took
+
+A model says *"I've sent the email"* and emits **no `send_email` call**. No
+error, no log, HTTP 200 — the silent failure. `cruxial.run()` catches it:
+
+```python
+result = cruxial.run(client, model="gpt-4o", messages=messages,
+                     tools=tools, executors=executors)   # bypass check is on by default
+
+if result.bypass:        # the model claimed an action and, when re-prompted, confirmed it
+    print("caught a bypass:", result.bypass.tool)
+```
+
+**How it works (zero cost on normal turns):** a final text turn is flagged
+*only* when it claims a completed action (`"sent"`, not `"send"`), attributed
+to the assistant (not *"you"* / *"the scheduler"* / *"automatically"*), for a
+side-effecting tool that was never called. A flagged turn gets **one neutral
+re-prompt** — the model either re-emits the call (corrected + executed) or
+declines (we do nothing). We only ever act on a model-confirmed re-emission, so
+we never fabricate an action.
+
+Benchmarked on a 132-scenario adversarial set (see [BENCHMARKS.md](BENCHMARKS.md)):
+**100% correction recall**, **acted-on precision 100% (Claude sonnet-4-6) / 98.4%
+(gpt-4o)**. Set `bypass="off"` to disable; `bypass="strict"` for a 2-call variant.
 
 ## Auto-repair (one line)
 
@@ -262,11 +289,12 @@ infrastructure unless you opt into Cruxial Cloud (coming soon).
 - ✅ Local SQLite + stdout telemetry
 - ✅ `cruxial stats` CLI
 - ✅ Fail-open by default
+- ✅ `cruxial.run()` — one managed turn (OpenAI / Azure / Anthropic / LiteLLM)
+- ✅ **`tool_bypass` detection** — the claimed-but-never-called catch
 
 Coming:
 - TypeScript SDK
 - LangChain, LlamaIndex, AutoGen adapters
-- Tool bypass detection (the hardest one)
 - Hosted dashboard with cross-customer schema drift alerts
 - Pydantic / Zod custom validators
 

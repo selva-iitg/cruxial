@@ -422,6 +422,28 @@ class Cruxial:
         schema = self.schemas.get(failure.tool)
         return build_repair_prompt(failure, schema, failed_args)
 
+    def record_bypass(self, tool: str) -> None:
+        """Log a tool_bypass interception so `cruxial stats` counts it.
+
+        Called by ``cruxial.run`` when the model claimed an action in prose,
+        emitted no matching call, and confirmed the bypass on a neutral
+        re-prompt (then got corrected). Fail-open like all telemetry.
+        """
+        failure = Failure(
+            category="tool_bypass",
+            tool=tool,
+            message=f"assistant claimed a {tool!r} action with no matching tool call",
+        )
+        self._record(
+            tool=tool,
+            status="intercepted",
+            failure=failure,
+            args={},
+            latency_ns=time.perf_counter_ns(),
+            schema_hash=self._schema_hashes.get(tool, "-"),
+            repaired=True,
+        )
+
     def close(self) -> None:
         try:
             self.sink.close()

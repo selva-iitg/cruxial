@@ -29,6 +29,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from cruxial.bypass import BypassSuspicion, detect_bypass
 from cruxial.core import Cruxial, GuardConfig, guard as _guard
 from cruxial.errors import ProviderUnsupported
 
@@ -48,13 +49,19 @@ class RunResult:
                     {name, args, ok, value, failure, repaired}.
         finished:   True when the model returned no tool calls — your cue to
                     stop the outer loop.
-        stats:      {passed, intercepted, repaired} counts for this turn.
+        bypass:     A BypassSuspicion if the model claimed an action without
+                    calling the tool AND, on a neutral re-prompt, confirmed it
+                    by re-emitting the call (which then executed). None
+                    otherwise. This is the "your agent said it sent the email,
+                    it didn't" catch.
+        stats:      {passed, intercepted, repaired, bypass} counts for this turn.
     """
 
     messages: list[Any]
     text: str | None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finished: bool = False
+    bypass: BypassSuspicion | None = None
     stats: dict[str, int] = field(default_factory=dict)
 
 
@@ -66,6 +73,8 @@ def run(
     tools: list[dict[str, Any]],
     executors: Mapping[str, Callable[..., Any]],
     repair: bool = True,
+    bypass: str = "on",
+    side_effecting: list[str] | None = None,
     provider: str = "auto",
     guard: Cruxial | None = None,
     config: GuardConfig | None = None,
@@ -97,11 +106,43 @@ def run(
     new_messages = list(messages)
     new_messages.append(assistant_msg)
 
-    # 3. No tool calls → the turn is the answer. Done.
+    # 3. No tool calls → candidate final reply. Before declaring done, check
+    #    for tool_bypass: did the text CLAIM an action it never called? If a
+    #    local (zero-cost) pre-filter flags it, give the model ONE neutral
+    #    re-prompt. If it re-emits the call → real bypass, correct it. If it
+    #    declines → not a bypass, return the reply unchanged (check invisible).
+    bypass_finding: BypassSuspicion | None = None
+    if not calls:
+        suspicion = None
+        if bypass != "off":
+            names, descs = _tool_meta(tools)
+            suspicion = detect_bypass(
+                text,
+                tool_calls_this_turn=[],
+                tool_names=names,
+                called_tools=_called_tools(messages),
+                side_effecting=side_effecting,
+                descriptions=descs,
+            )
+        if suspicion is not None:
+            corrected = _attempt_correction(
+                strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
+            if corrected is not None:
+                # Confirmed bypass — adopt the corrected turn, drop the false
+                # prose + the re-prompt so history stays clean.
+                n_assistant, n_calls, n_text = corrected
+                bypass_finding = suspicion
+                assistant_msg, calls, text = n_assistant, n_calls, n_text
+                new_messages = list(messages) + [assistant_msg]
+                if hasattr(cx, "record_bypass"):
+                    cx.record_bypass(suspicion.tool)
+            # else: model declined → genuine final reply; leave as-is.
+
     if not calls:
         return RunResult(
             messages=new_messages, text=text, tool_calls=[], finished=True,
-            stats={"passed": 0, "intercepted": 0, "repaired": 0},
+            bypass=None,
+            stats={"passed": 0, "intercepted": 0, "repaired": 0, "bypass": 0},
         )
 
     # 4. Validate + execute each call.
@@ -145,14 +186,122 @@ def run(
         "passed": sum(1 for o in outcomes if o.ok and not o.repaired),
         "intercepted": sum(1 for o in outcomes if o.repaired or not o.ok),
         "repaired": sum(1 for o in outcomes if o.repaired),
+        "bypass": 1 if bypass_finding else 0,
     }
     return RunResult(
         messages=new_messages,
         text=text,
         tool_calls=[o.public() for o in outcomes],
         finished=False,
+        bypass=bypass_finding,
         stats=stats,
     )
+
+
+# ─── bypass helpers ────────────────────────────────────────────────────────
+
+
+def _tool_meta(tools: list[dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
+    """Extract ({names}, {name: description}) from OpenAI or Anthropic tool defs."""
+    names: list[str] = []
+    descs: dict[str, str] = {}
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") == "function" and isinstance(t.get("function"), dict):
+            fn = t["function"]
+            n, d = fn.get("name"), fn.get("description", "")
+        else:
+            n, d = t.get("name"), t.get("description", "")
+        if n:
+            names.append(n)
+            descs[n] = d or ""
+    return names, descs
+
+
+def _called_tools(messages: list[Any]) -> set[str]:
+    """Names of every tool called anywhere in the conversation (both formats)."""
+    out: set[str] = set()
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        for tc in (m.get("tool_calls") or []):          # OpenAI
+            fn = tc.get("function") if isinstance(tc, dict) else None
+            if fn and fn.get("name"):
+                out.add(fn["name"])
+        content = m.get("content")
+        if isinstance(content, list):                    # Anthropic
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name"):
+                    out.add(b["name"])
+    return out
+
+
+def _nudge_text(s: BypassSuspicion) -> str:
+    """The NEUTRAL re-prompt. Gives the model a genuine out so a false suspect
+    isn't coerced into a fabricated call — this is the lever on acted-on
+    precision. The idempotency clause ("if already done, do NOT call again")
+    is what stops sycophantic models from re-doing an action attributed to a
+    scheduler / another system / an earlier step."""
+    return (
+        f"You indicated you {s.evidence} (a completed '{s.action}' action), but no "
+        f"call to the `{s.tool}` tool was made in this turn.\n"
+        f"- If you intended to {s.action} and it has NOT actually been performed yet, "
+        f"emit the `{s.tool}` tool call now to carry it out.\n"
+        f"- If the action was already done — by you in an earlier step, by another "
+        f"system, or automatically — or you did not intend to perform it, do NOT call "
+        f"the tool. Calling it again would DUPLICATE the action. Just reply in plain text.\n"
+        f"Only call `{s.tool}` if it genuinely still needs to happen now."
+    )
+
+
+def _judge_prompt(s: BypassSuspicion) -> str:
+    """The 'strict' mode's NO-TOOL judgment. Separating the verdict from the
+    tool removes the reflex that makes sycophantic models re-fire an action
+    that was already done (the gpt-4o failure mode in the eval)."""
+    return (
+        f"You indicated you {s.evidence} (a '{s.action}' action), but no `{s.tool}` "
+        f"tool call was made this turn. Reply with EXACTLY one word:\n"
+        f"  NEEDED — if the `{s.tool}` action genuinely still needs to be performed "
+        f"now by calling the tool, and has not actually happened yet.\n"
+        f"  DONE   — if it was already done (by you earlier, by another system, or "
+        f"automatically) or should not be performed.\n"
+        f"Do not call any tool. Answer NEEDED or DONE only."
+    )
+
+
+def _attempt_correction(strat, client, model, ctx_messages, tools, suspicion, mode, kwargs):
+    """Run the correction for a suspected bypass. Returns (assistant_msg, calls,
+    text) if the model CONFIRMS by emitting the call, else None (a denial).
+
+      - "on"     → one neutral re-prompt (tool offered). Cheapest; the re-prompt
+                   is both detector-of-record and corrector.
+      - "strict" → a no-tool judgment first (DONE/NEEDED); only on NEEDED do we
+                   force the emit. +1 call on a confirmed bypass, but immune to
+                   reflexive re-firing.
+    """
+    if mode == "strict":
+        try:
+            needed = strat.judge_needed(client, model, ctx_messages, _judge_prompt(suspicion), kwargs)
+        except Exception:
+            return None
+        if not needed:
+            return None
+        try:
+            n_assistant, n_calls, n_text = strat.forced_emit(
+                client, model, ctx_messages, tools, suspicion.tool, kwargs)
+        except Exception:
+            return None
+        return (n_assistant, n_calls, n_text) if n_calls else None
+
+    # default "on" — single neutral re-prompt with the tool available
+    nudge = {"role": "user", "content": _nudge_text(suspicion)}
+    try:
+        nresp = strat.create(client, model, ctx_messages + [nudge], tools, kwargs)
+        n_assistant, n_calls, n_text = strat.parse(nresp)
+    except Exception:
+        return None
+    return (n_assistant, n_calls, n_text) if n_calls else None
 
 
 # ─── internal outcome record ──────────────────────────────────────────────
@@ -248,6 +397,8 @@ class _Strategy:
     def tool_result_msgs(self, outcomes): raise NotImplementedError
     def repair(self, client, model, messages, tools, outcomes, kwargs): raise NotImplementedError
     def apply_correction(self, assistant_msg, call_id, new_args): pass  # rewrite persisted args
+    def judge_needed(self, client, model, messages, prompt, kwargs): raise NotImplementedError
+    def forced_emit(self, client, model, messages, tools, tool_name, kwargs): raise NotImplementedError
 
 
 class _OpenAIStrategy(_Strategy):
@@ -296,6 +447,20 @@ class _OpenAIStrategy(_Strategy):
             if tc.get("id") == call_id:
                 tc["function"]["arguments"] = json.dumps(new_args)
                 return
+
+    def judge_needed(self, client, model, messages, prompt, kwargs):
+        resp = client.chat.completions.create(
+            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kwargs)
+        txt = (resp.choices[0].message.content or "").upper()
+        return "NEEDED" in txt  # default ambiguous → DONE (don't act; precision-first)
+
+    def forced_emit(self, client, model, messages, tools, tool_name, kwargs):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=list(messages) + [{"role": "user",
+                "content": f"Call the `{tool_name}` tool now with the appropriate arguments."}],
+            tools=tools, tool_choice={"type": "function", "function": {"name": tool_name}}, **kwargs)
+        return self.parse(resp)
 
     def repair(self, client, model, messages, tools, outcomes, kwargs):
         from cruxial.adapters.openai import auto_repair_batch
@@ -354,6 +519,23 @@ class _AnthropicStrategy(_Strategy):
             if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") == call_id:
                 b["input"] = new_args
                 return
+
+    def judge_needed(self, client, model, messages, prompt, kwargs):
+        kw = dict(kwargs); kw.setdefault("max_tokens", 256)
+        resp = client.messages.create(
+            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kw)
+        txt = "".join(getattr(b, "text", "") for b in (getattr(resp, "content", []) or [])
+                      if getattr(b, "type", None) == "text").upper()
+        return "NEEDED" in txt
+
+    def forced_emit(self, client, model, messages, tools, tool_name, kwargs):
+        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
+        resp = client.messages.create(
+            model=model,
+            messages=list(messages) + [{"role": "user",
+                "content": f"Call the {tool_name} tool now with the appropriate arguments."}],
+            tools=tools, tool_choice={"type": "tool", "name": tool_name}, **kw)
+        return self.parse(resp)
 
     def tool_result_msgs(self, outcomes):
         # Anthropic: a single user turn carrying one tool_result block per call.
