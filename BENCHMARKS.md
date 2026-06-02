@@ -28,7 +28,7 @@ A "silent pass" is the only failure mode a validation layer truly owns. We do no
 | Live MCP, run #2 (post-QA) | Azure gpt-4o | 171 calls · same corpus | 4.7% (8/171) · 95% CI 2.4–9.0% | 87.5% (7/8) | 0 | <1ms |
 | Live MCP, run #1 (baseline) | Azure gpt-4o | 171 calls · same corpus | 7.0% (12/171) · 95% CI 4.1–11.9% | 91.7% (11/12) | 0 | <1ms |
 | **Synthetic robustness** | none (classifier only) | 877 schemas · 52 servers · 26 domains · 1947 violations | **100% rejection** · 98.3% exact-category | n/a | **0** | <1ms |
-| **Constraint-heavy schemas** | Azure gpt-4o | 70 calls · 15 production-class tools | **17.1%** (12/70) ±8.8% CI | 66.7% (8/12) | **0** | <1ms |
+| **Constraint-heavy schemas** | Azure gpt-4o | 70 calls · 15 production-class tools | **17.1%** (12/70) ±8.8% CI | 66.7% (8/12) → **93.8%** on 2026-06-02 re-run (§C) | **0** | <1ms |
 | Same schemas, mini-tier model | Azure gpt-5-mini-2 | 74 calls · same tools | **1.4%** (1/74) ±2.7% CI | 100% (1/1) | **0** | <1ms |
 | **Pre-flight lint** (derived from live runs) | none | 9 server-side OpenAI rejections | **100% caught pre-flight** | n/a | **0** | <1ms |
 | Control: simple-schema MCP | Azure gpt-4o | 25 calls · 7 simple servers | 0.0% | n/a | **0** | <1ms |
@@ -288,6 +288,23 @@ failure categories caught
 silent passes                0
 wall clock                  104s
 ```
+
+**Azure gpt-4o · re-run on current code (2026-06-02)**
+
+Same 70 prompts, same schemas, run on the post-multi-error-fix SDK:
+
+```
+tool calls made             70
+intercepted                 16  ( 22.9% of calls)
+  auto-repaired             15  ( 93.8%)
+  unrepairable               1
+failure categories: format_violation 11 · constraint_violation 4 · enum_violation 1
+silent passes                0
+```
+
+Two honest reads vs run #1:
+- **Intercept 17.1% → 22.9%** is gpt-4o non-determinism, not a real change — both samples sit inside run #1's ±8.8% CI (8.3–25.9%). Cite **17.1%** (run #1) or treat **~20%** as the 2-run blend; don't read the jump as a trend.
+- **Repair 66.7% → 93.8% IS a real improvement** — the multi-error-per-call fix (now surfacing all violations in one repair, see run #1's note) did exactly what it was meant to. The representative repair number to cite is the pooled live-MCP **90%** (larger sample, same current code); the constraint-heavy 66.7% is a pre-fix figure kept here for the record.
 
 **Azure gpt-5-mini-2 — same prompts, same schemas**
 
