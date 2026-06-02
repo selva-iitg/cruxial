@@ -16,8 +16,11 @@ Run:
     cruxial stats --since 30m
 
 The schema caps `due_in_hours` at 168 and the prompt asks for "two weeks"
-(~336h) — so on most models you'll see a constraint_violation get intercepted
-and auto-repaired in one round-trip before the task is created.
+(~336h). On smaller/older models you'll see a constraint_violation intercepted
+and auto-repaired in one round-trip. Frontier models (gpt-4o, Claude) often
+self-cap — they notice the limit and ask instead of emitting an invalid call —
+which is also a good outcome; the demo explains whichever happens. For
+interceptions at scale, run `examples/demo_suite.py`.
 """
 
 from __future__ import annotations
@@ -84,12 +87,14 @@ def main() -> int:
     print(f"prompt: {PROMPT}\n")
 
     turn = 0
+    any_tool = False
     result = cruxial.run(client, model=model, messages=messages, tools=tools, executors=executors)
     while True:
         turn += 1
         for tc in result.tool_calls:
+            any_tool = True
             cat = tc["failure"].category if tc["failure"] else None
-            tag = "repaired ✓" if tc["repaired"] else ("ok" if tc["ok"] else f"BLOCKED · {cat}")
+            tag = "repaired ✓" if tc["repaired"] else ("executed ✓" if tc["ok"] else f"BLOCKED · {cat}")
             print(f"  turn {turn} → {tc['name']}({tc['args']})  [{tag}]")
         if result.finished:
             break
@@ -97,9 +102,18 @@ def main() -> int:
                              tools=tools, executors=executors)
 
     print("\n" + "─" * 56)
-    print(f"task created: {created}")
-    print(f"final answer: {result.text}\n")
-    print("see the interception: cruxial stats --since 30m\n")
+    if created:
+        print(f"✅ task created: {created}")
+    elif not any_tool:
+        # Frontier models often SELF-CAP on an obvious constraint — they ask
+        # instead of emitting an invalid call. That's a good outcome, not a
+        # failure: there was simply nothing for Cruxial to intercept.
+        print("ℹ the model recognized the constraint and asked instead of emitting an")
+        print("  invalid call (frontier models self-cap). Nothing to intercept here —")
+        print("  Cruxial catches it on models/schemas that DON'T self-cap. Try")
+        print("  `python examples/demo_suite.py` to see real interceptions at scale.")
+    print(f"\nfinal answer: {result.text}\n")
+    print("see what flowed through cruxial: cruxial stats --since 30m\n")
     return 0
 
 
