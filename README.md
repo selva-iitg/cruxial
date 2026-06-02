@@ -31,6 +31,7 @@ cruxial demo
 ## 30-second demo
 
 ```python
+import json
 from cruxial import guard
 from openai import OpenAI
 
@@ -60,7 +61,8 @@ cruxial = guard(schemas=schemas, executors=executors)
 
 # In your agent loop:
 for tool_call in llm_response.tool_calls:
-    result = cruxial.execute(tool_call.name, tool_call.arguments)
+    args = json.loads(tool_call.arguments)   # OpenAI returns arguments as a JSON string
+    result = cruxial.execute(tool_call.name, args)
 
     if not result.ok:
         # result.failure.category, .message, .repair_prompt
@@ -144,7 +146,10 @@ Benchmarked on a 132-scenario adversarial set (see [BENCHMARKS.md](BENCHMARKS.md
 **100% correction recall**, **acted-on precision 100% (Claude sonnet-4-6) / 98.4%
 (gpt-4o)**. Set `bypass="off"` to disable; `bypass="strict"` for a 2-call variant.
 
-## Auto-repair (one line)
+## Auto-repair
+
+`cruxial.run()` already auto-repairs for you. If you use `guard()` directly,
+call the adapter helper with the failure context:
 
 ```python
 from cruxial.adapters.openai import auto_repair
@@ -153,9 +158,17 @@ cruxial = guard(schemas=schemas, executors=executors)
 result = cruxial.execute(name, args)
 
 if not result.ok:
-    # 1-attempt structured retry with the failure injected into context
-    new_args = auto_repair(client, model, messages, schemas, result.failure)
-    result = cruxial.execute(name, new_args)
+    # 1-attempt structured retry — feeds the failure back to the model
+    new_args = auto_repair(
+        client,
+        model=model,
+        messages=messages,            # conversation incl. the assistant tool-call turn
+        tools=tools,                  # the same tool defs you sent the model
+        failure=result.failure,
+        failed_args=args,
+        repair_prompt=cruxial.build_repair_prompt(result.failure, args),
+    )
+    result = cruxial.execute_repaired(name, new_args)
 ```
 
 Roughly **90% of intercepted calls are fixed in a single repair round-trip**
