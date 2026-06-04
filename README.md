@@ -65,8 +65,9 @@ for tool_call in llm_response.tool_calls:
     result = cruxial.execute(tool_call.name, args)
 
     if not result.ok:
-        # what went wrong, safely: result.failure_category → e.g. "type_mismatch"
-        # or "executor_error".  (result.failure = validation; result.error = tool exception.)
+        # A not-ok result always carries result.failure (so result.failure.category
+        # never AttributeErrors): a validation category like "type_mismatch", or
+        # "executor_error" when your tool raised — the raw exception is on result.error.
         result.raise_on_failure()        # raises the right typed error for either case
 
     use(result.value)

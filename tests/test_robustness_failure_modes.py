@@ -182,6 +182,17 @@ def test_noop_guard_knows_returns_false_so_integration_bypasses():
     assert not cx.knows("anything")
 
 
+def test_noop_guard_execute_not_ok_still_carries_failure():
+    """The not-ok contract holds on the no-op path too: NoopCruxial.execute()
+    surfaces an error AND a failure, so `result.failure.category` is safe."""
+    cx = NoopCruxial()
+    res = cx.execute("anything", {"any": "args"})
+    assert not res.ok
+    assert res.error is not None
+    assert res.failure is not None and res.failure.category == "executor_error"
+    assert res.failure_category == "executor_error"
+
+
 # ─── 4. Repair adapter errors → typed exception ──────────────────────
 
 
@@ -309,12 +320,16 @@ def test_executor_raising_arbitrary_exception_returns_typed_result():
     )
     res = cx.execute("send_email", {"to": "a@b.com", "subject": "x", "body": "y"})
     assert not res.ok
-    assert isinstance(res.error, ValueError)
+    assert isinstance(res.error, ValueError)  # raw exception still available
     assert "user code bug" in str(res.error)
-    # ergonomics: `failure` is None on executor errors (it's validation-only), so
-    # `result.failure.category` would AttributeError — the safe accessor must not.
-    assert res.failure is None
+    # Contract: a not-ok result ALWAYS carries a Failure, so the natural
+    # `result.failure.category` never AttributeErrors. Executor exceptions get a
+    # synthesized `executor_error` Failure; the raw exception stays on `.error`.
+    assert res.failure is not None
+    assert res.failure.category == "executor_error"
+    assert "user code bug" in res.failure.message
     assert res.failure_category == "executor_error"
+    # raise_on_failure still raises the ORIGINAL exception type, not a wrapper.
     with pytest.raises(ValueError):
         res.raise_on_failure()
 

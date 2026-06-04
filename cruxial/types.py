@@ -9,9 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from cruxial.errors import SchemaViolation, ToolUnknown
+from cruxial.errors import CruxialError, SchemaViolation, ToolUnknown
 
-# The 7 failure categories. Order matters only for stable enumeration.
+# Failure categories. Order matters only for stable enumeration.
 FailureCategory = Literal[
     "missing_required",
     "type_mismatch",
@@ -21,6 +21,7 @@ FailureCategory = Literal[
     "extra_field",
     "unknown_tool",
     "tool_bypass",  # model claimed an action in prose but emitted no matching tool call
+    "executor_error",  # the user's executor itself raised (raw exception at .error)
 ]
 
 
@@ -51,10 +52,14 @@ class Failure:
         """Primary + siblings, in detection order. Always non-empty."""
         return [self] + list(self.siblings)
 
-    def as_exception(self) -> SchemaViolation | ToolUnknown:
+    def as_exception(self) -> CruxialError:
         """Convert into the matching typed exception."""
         if self.category == "unknown_tool":
             return ToolUnknown(f"{self.tool}: {self.message}")
+        if self.category == "executor_error":
+            # The raw exception lives on ExecutionResult.error; raise_on_failure()
+            # prefers it. This is the fallback for a direct as_exception() call.
+            return CruxialError(f"executor for {self.tool!r} raised: {self.message}")
         return SchemaViolation(
             tool=self.tool,
             category=self.category,
@@ -85,13 +90,29 @@ class ExecutionResult:
     # If repair was attempted, the corrected args that actually ran.
     repaired_args: dict[str, Any] | None = None
 
+    def __post_init__(self) -> None:
+        # Contract: a not-ok result ALWAYS carries a Failure. Executor exceptions
+        # set .error (the raw exception) but historically left .failure None, so the
+        # natural `result.failure.category` raised AttributeError. Synthesize an
+        # ``executor_error`` Failure so `not ok` ⟹ `failure is not None` holds at
+        # every call site — the real executor path and no-op mode alike. The raw
+        # exception stays on .error for callers that want it.
+        if not self.ok and self.failure is None and self.error is not None:
+            self.failure = Failure(
+                category="executor_error",
+                tool=self.tool,
+                message=str(self.error) or type(self.error).__name__,
+            )
+
     def raise_on_failure(self) -> Any:
         """Convenience: raise the typed exception if not ok, else return value."""
         if not self.ok:
-            if self.failure is not None:
-                raise self.failure.as_exception()
+            # Prefer the raw executor exception — it's more informative than the
+            # synthesized executor_error Failure and preserves the original type.
             if self.error is not None:
                 raise self.error
+            if self.failure is not None:
+                raise self.failure.as_exception()
         return self.value
 
     @property
@@ -99,11 +120,9 @@ class ExecutionResult:
         """Why the call is not ok — safe to read without a None check.
 
         Returns the validation category (``missing_required``, ``type_mismatch``,
-        …), or ``"executor_error"`` if the tool itself raised, else ``None``. Use
-        this (or ``raise_on_failure()``) instead of ``result.failure.category``:
-        ``failure`` is set only for *validation* failures, while ``error`` holds
-        an *executor* exception, so a bare ``result.failure.category`` can
-        ``AttributeError`` when the tool's own code raises.
+        …), or ``"executor_error"`` if the tool itself raised, else ``None``.
+        Equivalent to ``self.failure.category`` now that a not-ok result always
+        carries a Failure, but stays null-safe on an ok result.
         """
         if self.failure is not None:
             return self.failure.category
