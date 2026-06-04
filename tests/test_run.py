@@ -240,7 +240,7 @@ def test_strict_bypass_confirmed_judges_then_forces_emit():
 def test_strict_bypass_judged_done_takes_no_action():
     ex, sent = _executors()
     client = FakeOpenAI([
-        _oai_text("My colleague sent the email earlier today."),         # suspect (3rd-party person)
+        _oai_text("I already sent the email earlier today."),            # flagged (1st-person completion claim)
         _oai_text("DONE"),                                               # judgment → already done
     ])
     r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "status?"}],

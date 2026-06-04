@@ -103,10 +103,17 @@ def test_asserted_actions_requires_completion_form():
     "The cron job posted the update.",
     "Our backend already sent the confirmation.",
     "The service has charged the customer.",
+    # people / roles / pronouns — a non-assistant human did it (live false-action found by PoC)
+    "My colleague already created the ticket on their end.",
+    "The PM approved the request.",
+    "Our intern sent the welcome email.",
+    "They created the record themselves.",
+    "Someone already deleted that file.",
 ])
 def test_third_party_subject_not_flagged(text):
     assert asserted_actions(text) == {}
-    assert _flag(text, ["send_email", "create_report", "charge_card", "post_update"]) is None
+    assert _flag(text, ["send_email", "create_ticket", "create_report", "charge_card",
+                        "post_update", "approve_request", "delete_file"]) is None
 
 
 @pytest.mark.parametrize("text,canon", [

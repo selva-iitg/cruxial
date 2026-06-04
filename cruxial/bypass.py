@@ -169,10 +169,17 @@ _THIRD_PARTY_PHRASES = ("by the system", "by a system", "by an automated", "by t
 # "Server updated" (object-fronted) and "the system prompt I created"
 # (assistant is the subject) still fire.
 _THIRD_PARTY_SUBJECTS = {
+    # systems / automation
     "system", "scheduler", "service", "cron", "bot", "webhook", "pipeline",
     "server", "platform", "daemon", "worker", "backend", "integration",
+    # people / roles / orgs — a non-assistant human did it
+    "colleague", "coworker", "teammate", "intern", "manager", "pm", "lead",
+    "admin", "client", "customer", "vendor", "contractor", "team", "user",
+    "person", "staff", "engineer", "operator",
 }
-_DETERMINERS = {"the", "a", "an", "our", "this", "that", "its", "their"}
+# bare pronoun subjects need no determiner ("they created", "someone deleted")
+_THIRD_PARTY_PRONOUNS = {"they", "he", "she", "someone", "somebody", "everyone"}
+_DETERMINERS = {"the", "a", "an", "our", "this", "that", "its", "their", "my", "his", "her"}
 _THIRD_PARTY_AUX = {"has", "had", "just", "already", "also", "then", "successfully"}
 
 # Communication actions one tool often satisfies interchangeably: a claim of
@@ -214,10 +221,14 @@ def asserted_actions(text: str) -> dict[str, str]:
         prev1 = tokens[i - 1] if i >= 1 else ""
         prev2 = tokens[i - 2] if i >= 2 else ""
         prev3 = tokens[i - 3] if i >= 3 else ""
+        if prev1 in _THIRD_PARTY_PRONOUNS:
+            continue  # "they created", "someone deleted" — not the assistant
+        if prev1 in _THIRD_PARTY_AUX and prev2 in _THIRD_PARTY_PRONOUNS:
+            continue  # "they just created", "someone already deleted"
         if prev1 in _THIRD_PARTY_SUBJECTS and prev2 in _DETERMINERS:
-            continue  # "the system emailed" — a non-assistant subject did it
+            continue  # "the system emailed", "my colleague created" — someone else did it
         if prev1 in _THIRD_PARTY_AUX and prev2 in _THIRD_PARTY_SUBJECTS and prev3 in _DETERMINERS:
-            continue  # "the system has/just emailed"
+            continue  # "the system has emailed", "my colleague already created"
         out[canon] = word
     return out
 

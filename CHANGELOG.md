@@ -5,7 +5,7 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 ## [0.2.1] — 2026-06-05
 
 ### Fixed
-- **`tool_bypass` false positive on third-party subjects** — "The system emailed the invoice" no longer fires. The attribution guard previously only covered passive/agent forms ("by the system", "by the scheduler"); it now also suppresses a non-assistant *subject* directly before the verb ("the system emailed", "the cron job created"), while still firing on object-fronted ("Server updated") and assistant-subject ("the system config I updated") phrasings.
+- **`tool_bypass` false positives on third-party subjects** — claims attributed to a non-assistant *subject* no longer fire: systems/automation ("the system emailed", "the cron job created") **and** people/roles/pronouns ("my colleague created the ticket", "the PM approved", "they deleted it"). The guard previously only covered passive/agent forms ("by the system"); it now suppresses an explicit non-assistant subject directly before the verb, while still firing on object-fronted ("Server updated"), subjectless ("Ticket created."), and assistant-subject ("the config I updated") phrasings. This closed a live false-action found on the adversarial set (precision back to 0 false actions).
 
 ### Improved
 - **`tool_bypass` recall on real-world phrasings** — communication-action claims now match a single comms tool interchangeably (e.g. "notified the team" matches `send_email`), and the `push`/`ship` dev idioms are recognized both as completion claims and as tool-name verbs (so "pushed that update" matches a `push_update`/`deploy_*` tool). Offline detector eval rose from 86.7% → 100% recall with precision held at 100%.
