@@ -10,11 +10,11 @@
 
 Your agent said it sent the email. It didn't.
 
-Cruxial intercepts every LLM tool call before it executes, validates arguments
-against your schema, and auto-repairs hallucinated args via a structured retry.
-Drop-in for OpenAI and Anthropic. <1ms p99 added overhead — validation is
-local, no extra network hop. Fail-open by default — if Cruxial itself errors,
-the tool still executes.
+Cruxial intercepts every LLM tool call before it executes. It validates the
+arguments against your schema and auto-repairs hallucinated args with a
+structured retry. Drop-in for OpenAI and Anthropic. Overhead is under 1ms p99,
+because validation runs locally with no extra network hop. It fails open by
+default: if Cruxial itself errors, your tool still runs.
 
 ```bash
 pip install cruxial
@@ -75,9 +75,9 @@ for tool_call in llm_response.tool_calls:
 ## Or: one call does the whole turn
 
 `guard()` gives you full control. If you write the usual raw-SDK loop, `cruxial.run()`
-does the entire tool step in one call — **call the model, validate every tool call,
-execute the valid ones, auto-repair the bad ones in one round-trip, log, and append
-the results** — for OpenAI / Azure / Anthropic / LiteLLM. You keep your loop:
+does the entire tool step in one call: it calls the model, validates every tool call,
+executes the valid ones, auto-repairs the bad ones in one round-trip, then logs and
+appends the results. Works with OpenAI, Azure, Anthropic, and LiteLLM. You keep your loop:
 
 ```python
 import cruxial
@@ -97,10 +97,10 @@ while not result.finished:  # your loop stays yours — one model call per turn
 print(result.text)          # the model's final answer
 ```
 
-It reuses your already-configured client (Azure endpoint/version, base_url, timeouts —
-all preserved), derives schemas from `tools`, and fails open. It is deliberately **one
-turn, not a framework**: no streaming, no multi-turn ownership — you decide when to stop.
-Need to own execution yourself? Drop to `guard().check()` / `.execute()`.
+It reuses your already-configured client (your Azure endpoint/version, base_url, and
+timeouts are all preserved), derives schemas from `tools`, and fails open. It is
+deliberately **one turn, not a framework**: no streaming and no multi-turn ownership, so
+you decide when to stop. Need to own execution yourself? Drop to `guard().check()` / `.execute()`.
 
 ## What it catches
 
@@ -246,14 +246,14 @@ no proxies, no framework lock-in.
 
 ## Schema source — read this if your LLM sees a trimmed schema
 
-If your code maintains TWO views of each tool schema — the **canonical**
-full one (used internally for execution) and a **trimmed view** sent to
-the LLM (the L1 / model-visible schema) — register the trimmed one with
-Cruxial, not the canonical.
+If your code maintains TWO views of each tool schema (a **canonical** full
+one used internally for execution, and a **trimmed view** sent to the LLM,
+the L1 / model-visible schema), register the trimmed one with Cruxial, not
+the canonical.
 
 Why: the LLM can only satisfy the schema it was shown. If the canonical
 has fields the LLM never saw, `missing_required` and `extra_field`
-interceptions become false positives — the model didn't fail, you just
+interceptions become false positives. The model didn't fail; you just
 validated against the wrong contract.
 
 ```python
