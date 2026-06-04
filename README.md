@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cruxial.svg?label=pypi&color=blue)](https://pypi.org/project/cruxial/)
 [![Python](https://img.shields.io/pypi/pyversions/cruxial.svg)](https://pypi.org/project/cruxial/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Socket](https://badge.socket.dev/pypi/package/cruxial/0.1.0?artifact_id=tar-gz)](https://socket.dev/pypi/package/cruxial)
+[![Socket](https://badge.socket.dev/pypi/package/cruxial/0.2.0?artifact_id=tar-gz)](https://socket.dev/pypi/package/cruxial)
 
 **The reliability layer for LLM tool calls.**
 
@@ -124,7 +124,8 @@ structurally can't catch — there's no call to validate. See below.
 ## tool_bypass — catch the action your agent claimed but never took
 
 A model says *"I've sent the email"* and emits **no `send_email` call**. No
-error, no log, HTTP 200 — the silent failure. `cruxial.run()` catches it:
+call ever goes out — so no error, no log, nothing to grep for. The silent
+failure. `cruxial.run()` catches it:
 
 ```python
 result = cruxial.run(client, model="gpt-4o", messages=messages,
@@ -172,8 +173,8 @@ if not result.ok:
 ```
 
 Roughly **90% of intercepted calls are fixed in a single repair round-trip**
-on the pooled live-MCP benchmark (66–92% across models and schema complexity).
-Every number is sourced in [BENCHMARKS.md](BENCHMARKS.md).
+on the pooled live-MCP benchmark (87–94% per run on current code). Every number
+is sourced in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## See your interception rate
 
@@ -292,12 +293,12 @@ timing. **Never the argument values themselves.** Hashes only.
 The interceptor runs in your process. Your data never leaves your
 infrastructure unless you opt into Cruxial Cloud (coming soon).
 
-## What ships in v0.1
+## What ships today (v0.2)
 
 - ✅ Python SDK
 - ✅ OpenAI + **Azure OpenAI** + Anthropic + LiteLLM (auto via normalization)
 - ✅ JSON Schema validation
-- ✅ 7 failure categories
+- ✅ 7 schema-validation categories (+ `tool_bypass` below = 8 total)
 - ✅ 1-attempt auto-repair
 - ✅ Local SQLite + stdout telemetry
 - ✅ `cruxial stats` CLI
