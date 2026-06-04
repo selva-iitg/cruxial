@@ -312,6 +312,13 @@ Coming:
 - Hosted dashboard with cross-customer schema drift alerts
 - Pydantic / Zod custom validators
 
+## Questions or feedback?
+
+Open a [GitHub issue](https://github.com/cruxial-ai/cruxial/issues), or reach the
+maintainers on [Discord](https://discord.gg/qJu7yq54s). We'd especially like to hear
+from anyone running Cruxial in a real agent — early design-partner feedback shapes
+the roadmap.
+
 ## License
 
 MIT. The SDK runs entirely in your process. The hosted dashboard (Cruxial
