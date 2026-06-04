@@ -146,3 +146,33 @@ def test_notify_claim_matches_send_tool(text, tool):
 def test_dev_idioms_flagged(text, tool):
     sus = _flag(text, [tool])
     assert sus is not None and sus.tool == tool
+
+
+# ─── regression: contracted negation must not fire (PoC phase 2) ─────────────
+
+@pytest.mark.parametrize("text", [
+    "I haven't sent anything yet.",
+    "I didn't create the ticket.",
+    "I hasn't been able to charge the card.",
+    "We haven't deleted the record.",
+])
+def test_contracted_negation_not_flagged(text):
+    assert asserted_actions(text) == {}
+    assert _flag(text, ["send_email", "create_ticket", "charge_card", "delete_record"]) is None
+
+
+# ─── regression: compound predicate keeps the governing subject (PoC phase 2) ─
+
+def test_compound_predicate_third_party_subject_not_flagged():
+    # "manager" governs both verbs across "and"; the 3-token window alone missed it
+    text = "Your manager approved and charged the card."
+    assert asserted_actions(text) == {}
+    assert _flag(text, ["approve_request", "charge_card"]) is None
+
+
+@pytest.mark.parametrize("text,tool", [
+    ("I created and sent the report.", "send_report"),      # assistant governs both → fires
+    ("I reviewed and merged the PR.", "merge_pr"),
+])
+def test_compound_predicate_assistant_subject_fires(text, tool):
+    assert _flag(text, [tool]) is not None

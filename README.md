@@ -65,9 +65,9 @@ for tool_call in llm_response.tool_calls:
     result = cruxial.execute(tool_call.name, args)
 
     if not result.ok:
-        # result.failure.category, .message, .repair_prompt
-        # See "Auto-repair" below for the one-line fix
-        raise result.failure.as_exception()
+        # what went wrong, safely: result.failure_category → e.g. "type_mismatch"
+        # or "executor_error".  (result.failure = validation; result.error = tool exception.)
+        result.raise_on_failure()        # raises the right typed error for either case
 
     use(result.value)
 ```

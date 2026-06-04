@@ -311,6 +311,12 @@ def test_executor_raising_arbitrary_exception_returns_typed_result():
     assert not res.ok
     assert isinstance(res.error, ValueError)
     assert "user code bug" in str(res.error)
+    # ergonomics: `failure` is None on executor errors (it's validation-only), so
+    # `result.failure.category` would AttributeError — the safe accessor must not.
+    assert res.failure is None
+    assert res.failure_category == "executor_error"
+    with pytest.raises(ValueError):
+        res.raise_on_failure()
 
 
 def test_executor_raising_keyboard_interrupt_propagates():

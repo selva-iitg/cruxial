@@ -94,6 +94,23 @@ class ExecutionResult:
                 raise self.error
         return self.value
 
+    @property
+    def failure_category(self) -> str | None:
+        """Why the call is not ok — safe to read without a None check.
+
+        Returns the validation category (``missing_required``, ``type_mismatch``,
+        …), or ``"executor_error"`` if the tool itself raised, else ``None``. Use
+        this (or ``raise_on_failure()``) instead of ``result.failure.category``:
+        ``failure`` is set only for *validation* failures, while ``error`` holds
+        an *executor* exception, so a bare ``result.failure.category`` can
+        ``AttributeError`` when the tool's own code raises.
+        """
+        if self.failure is not None:
+            return self.failure.category
+        if self.error is not None:
+            return "executor_error"
+        return None
+
 
 @dataclass(slots=True)
 class InterceptionRecord:

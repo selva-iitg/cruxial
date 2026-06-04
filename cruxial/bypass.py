@@ -151,6 +151,11 @@ def _tool_actions(name: str) -> set[str]:
 _NON_COMPLETION_MARKERS = {
     "will", "ll", "to", "should", "shall", "would", "could", "can", "cannot",
     "may", "might", "must", "going", "not", "never", "yet", "cant", "wont",
+    # contracted negations: "I haven't sent", "didn't create", "won't post"
+    "haven't", "havent", "hasn't", "hasnt", "hadn't", "hadnt",
+    "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
+    "isn't", "isnt", "aren't", "arent", "wasn't", "wasnt", "weren't", "werent",
+    "won't", "wouldn't", "wouldnt", "shouldn't", "shouldnt", "couldn't", "couldnt", "can't",
 }
 
 # Second-person subjects just before the verb → the USER did it, not the
@@ -192,6 +197,27 @@ _ACTION_ALIASES: dict[str, frozenset[str]] = {
 }
 
 
+# coordinating words that chain verbs onto one subject ("approved and charged")
+_COORD = {"and", "or", "then", "also", "plus", "but"}
+
+
+def _governing_subject(tokens: list[str], i: int) -> tuple[str, str]:
+    """Walk back from the verb at index i past coordinating conjunctions, other
+    completion verbs, and auxiliaries to the token that governs it — the subject
+    in a compound predicate like "the manager approved and charged". Returns
+    (subject, token-before-subject); ("", "") if none is within reach.
+    """
+    j, steps = i - 1, 0
+    while j >= 0 and steps < 6:
+        w = tokens[j]
+        if w in _COORD or w in _COMPLETION_TO_CANON or w in _THIRD_PARTY_AUX:
+            j -= 1
+            steps += 1
+            continue
+        return w, (tokens[j - 1] if j >= 1 else "")
+    return "", ""
+
+
 def asserted_actions(text: str) -> dict[str, str]:
     """Canonical actions the text claims THE ASSISTANT completed → matched word.
 
@@ -229,6 +255,12 @@ def asserted_actions(text: str) -> dict[str, str]:
             continue  # "the system emailed", "my colleague created" — someone else did it
         if prev1 in _THIRD_PARTY_AUX and prev2 in _THIRD_PARTY_SUBJECTS and prev3 in _DETERMINERS:
             continue  # "the system has emailed", "my colleague already created"
+        # compound predicate: find the governing subject past "and"/coordinated verbs
+        subj, det = _governing_subject(tokens, i)
+        if subj in _SECOND_PERSON or subj in _THIRD_PARTY_PRONOUNS:
+            continue  # "your manager approved and charged", "she created and sent"
+        if subj in _THIRD_PARTY_SUBJECTS and (det in _DETERMINERS or det in _SECOND_PERSON):
+            continue
         out[canon] = word
     return out
 
