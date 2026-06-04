@@ -13,8 +13,6 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 ### Known limitation
 - Bypass detection triggers on completion-**form** verbs. A claim with no such verb — a purely idiomatic completion like "email's out" — is not flagged. This is deliberate: precision (never acting on a non-bypass) is the load-bearing property, and the verb vocabulary grows from real misses rather than by special-casing idioms.
 
-_Both surfaced by an external proof-of-concept run on Azure gpt-4o — thanks to the design partner who found and root-caused them. (Add their name/handle here.)_
-
 ## [0.2.0] — 2026-06-02
 
 ### Added
