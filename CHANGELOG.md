@@ -8,7 +8,10 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 - **`tool_bypass` false positive on third-party subjects** — "The system emailed the invoice" no longer fires. The attribution guard previously only covered passive/agent forms ("by the system", "by the scheduler"); it now also suppresses a non-assistant *subject* directly before the verb ("the system emailed", "the cron job created"), while still firing on object-fronted ("Server updated") and assistant-subject ("the system config I updated") phrasings.
 
 ### Improved
-- **`tool_bypass` recall on real-world phrasings** — communication-action claims now match a single comms tool interchangeably (e.g. "notified the team" matches `send_email`), and dev idioms `pushed`/`shipped` are recognized as completion-form claims. Offline detector eval rose from 86.7% → 100% recall with precision held at 100%.
+- **`tool_bypass` recall on real-world phrasings** — communication-action claims now match a single comms tool interchangeably (e.g. "notified the team" matches `send_email`), and the `push`/`ship` dev idioms are recognized both as completion claims and as tool-name verbs (so "pushed that update" matches a `push_update`/`deploy_*` tool). Offline detector eval rose from 86.7% → 100% recall with precision held at 100%.
+
+### Known limitation
+- Bypass detection triggers on completion-**form** verbs. A claim with no such verb — a purely idiomatic completion like "email's out" — is not flagged. This is deliberate: precision (never acting on a non-bypass) is the load-bearing property, and the verb vocabulary grows from real misses rather than by special-casing idioms.
 
 _Both surfaced by an external proof-of-concept run on Azure gpt-4o — thanks to the design partner who found and root-caused them. (Add their name/handle here.)_
 

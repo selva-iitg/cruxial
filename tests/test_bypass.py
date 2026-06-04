@@ -134,6 +134,7 @@ def test_notify_claim_matches_send_tool(text, tool):
 @pytest.mark.parametrize("text,tool", [
     ("I pushed the update to prod.", "deploy_service"),
     ("Shipped the new build.", "deploy_service"),
+    ("Yep, just pushed that update live.", "push_update"),  # tool-name verb maps to deploy too
 ])
 def test_dev_idioms_flagged(text, tool):
     sus = _flag(text, [tool])

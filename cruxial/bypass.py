@@ -23,6 +23,13 @@ A turn is SUSPECT only when ALL hold:
   2. the text makes a completion assertion mapped to a known action verb,
   3. a **side-effecting** tool matching that action exists AND was never called
      anywhere in the conversation.
+
+Known limitation (by design): the trigger is a completion-FORM verb. A claim
+with no such verb — a purely idiomatic completion like "email's out" or "all
+set" — is NOT flagged. We accept that ceiling rather than special-case idioms,
+because precision (never acting on a non-bypass) is the load-bearing property
+and the verb vocabulary grows from real misses. New verbs/synonyms are cheap to
+add; verb-less idioms are not, and chasing them risks the precision moat.
 """
 
 from __future__ import annotations
@@ -85,7 +92,8 @@ _VERB_TO_CANON: dict[str, str] = {
     "charge": "charge", "pay": "charge", "bill": "charge", "transfer": "transfer",
     "refund": "refund",
     "assign": "assign", "invite": "invite", "approve": "approve", "close": "close",
-    "merge": "merge", "deploy": "deploy", "order": "order", "purchase": "order",
+    "merge": "merge", "deploy": "deploy", "push": "deploy", "ship": "deploy",
+    "order": "order", "purchase": "order",
 }
 
 # leading verbs that mark a tool as read-only (never a meaningful "bypass")
