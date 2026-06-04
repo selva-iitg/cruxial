@@ -2,6 +2,16 @@
 
 All notable changes to Cruxial are documented here. Format: [Keep a Changelog](https://keepachangelog.com); versioning: [SemVer](https://semver.org).
 
+## [0.2.1] — 2026-06-05
+
+### Fixed
+- **`tool_bypass` false positive on third-party subjects** — "The system emailed the invoice" no longer fires. The attribution guard previously only covered passive/agent forms ("by the system", "by the scheduler"); it now also suppresses a non-assistant *subject* directly before the verb ("the system emailed", "the cron job created"), while still firing on object-fronted ("Server updated") and assistant-subject ("the system config I updated") phrasings.
+
+### Improved
+- **`tool_bypass` recall on real-world phrasings** — communication-action claims now match a single comms tool interchangeably (e.g. "notified the team" matches `send_email`), and dev idioms `pushed`/`shipped` are recognized as completion-form claims. Offline detector eval rose from 86.7% → 100% recall with precision held at 100%.
+
+_Both surfaced by an external proof-of-concept run on Azure gpt-4o — thanks to the design partner who found and root-caused them. (Add their name/handle here.)_
+
 ## [0.2.0] — 2026-06-02
 
 ### Added
@@ -32,6 +42,7 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.2.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.1
 [0.2.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.0
 [0.1.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.3
 [0.1.2]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.2

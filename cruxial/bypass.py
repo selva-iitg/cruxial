@@ -65,7 +65,7 @@ _COMPLETION_TO_CANON: dict[str, str] = {
     "charged": "charge", "paid": "charge", "billed": "charge",
     "transferred": "transfer", "refunded": "refund",
     "assigned": "assign", "invited": "invite", "approved": "approve",
-    "closed": "close", "merged": "merge", "deployed": "deploy",
+    "closed": "close", "merged": "merge", "deployed": "deploy", "pushed": "deploy", "shipped": "deploy",
     "ordered": "order", "purchased": "order", "placed": "order",
 }
 
@@ -154,6 +154,28 @@ _SECOND_PERSON = {"you", "you've", "youve", "your", "u", "you're", "youre"}
 _THIRD_PARTY_RE = re.compile(r"\b(scheduler|automatically|automated|automation|cron)\b")
 _THIRD_PARTY_PHRASES = ("by the system", "by a system", "by an automated", "by the bot")
 
+# Third-party SUBJECT performed the action — "the system emailed…", "the cron
+# job created…". Distinct from the passive/agent forms above: here a
+# non-assistant is the grammatical subject, directly before the verb. We
+# suppress only the clear "{determiner} {subject} [aux] {verb}" pattern, so
+# "Server updated" (object-fronted) and "the system prompt I created"
+# (assistant is the subject) still fire.
+_THIRD_PARTY_SUBJECTS = {
+    "system", "scheduler", "service", "cron", "bot", "webhook", "pipeline",
+    "server", "platform", "daemon", "worker", "backend", "integration",
+}
+_DETERMINERS = {"the", "a", "an", "our", "this", "that", "its", "their"}
+_THIRD_PARTY_AUX = {"has", "had", "just", "already", "also", "then", "successfully"}
+
+# Communication actions one tool often satisfies interchangeably: a claim of
+# "notified the team" is legitimately served by a send_email / message tool, so
+# the canonical action of the claim need not match the tool's verb exactly.
+_ACTION_ALIASES: dict[str, frozenset[str]] = {
+    "send": frozenset({"notify", "message"}),
+    "notify": frozenset({"send", "message"}),
+    "message": frozenset({"send", "notify"}),
+}
+
 
 def asserted_actions(text: str) -> dict[str, str]:
     """Canonical actions the text claims THE ASSISTANT completed → matched word.
@@ -165,6 +187,7 @@ def asserted_actions(text: str) -> dict[str, str]:
       - future/negation look-back  → "will be sent", "not created"
       - second-person look-back     → "the task YOU created"
       - third-party/automation      → "posted by the scheduler", "done automatically"
+      - third-party subject          → "the system emailed", "the cron job created"
     """
     low = text.lower()
     if _THIRD_PARTY_RE.search(low) or any(p in low for p in _THIRD_PARTY_PHRASES):
@@ -180,6 +203,13 @@ def asserted_actions(text: str) -> dict[str, str]:
             continue
         if any(w in _SECOND_PERSON for w in window):
             continue  # "you created" — the user did it, not the assistant
+        prev1 = tokens[i - 1] if i >= 1 else ""
+        prev2 = tokens[i - 2] if i >= 2 else ""
+        prev3 = tokens[i - 3] if i >= 3 else ""
+        if prev1 in _THIRD_PARTY_SUBJECTS and prev2 in _DETERMINERS:
+            continue  # "the system emailed" — a non-assistant subject did it
+        if prev1 in _THIRD_PARTY_AUX and prev2 in _THIRD_PARTY_SUBJECTS and prev3 in _DETERMINERS:
+            continue  # "the system has/just emailed"
         out[canon] = word
     return out
 
@@ -237,18 +267,20 @@ def detect_bypass(
             if name not in se or name in called:
                 continue
             actions = _tool_actions(name)
-            hit = actions & asserted.keys()
-            if hit:
-                action = sorted(hit)[0]
-                return BypassSuspicion(
-                    tool=name,
-                    action=action,
-                    evidence=asserted[action],
-                    reason=(
-                        f"assistant said {asserted[action]!r} (a completed {action!r} "
-                        f"action) but never called {name!r}"
-                    ),
-                )
+            # Match an asserted action to this tool — directly, or via a
+            # communication-cluster alias (notify ≈ send ≈ message), so
+            # "notified the team" matches a send_email tool.
+            for action in sorted(asserted):
+                if action in actions or (_ACTION_ALIASES.get(action, frozenset()) & actions):
+                    return BypassSuspicion(
+                        tool=name,
+                        action=action,
+                        evidence=asserted[action],
+                        reason=(
+                            f"assistant said {asserted[action]!r} (a completed {action!r} "
+                            f"action) but never called {name!r}"
+                        ),
+                    )
         return None
     except Exception:
         return None  # fail-open: detection must never break the host

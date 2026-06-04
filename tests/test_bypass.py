@@ -91,3 +91,50 @@ def test_asserted_actions_requires_completion_form():
     assert asserted_actions("I will send it") == {}          # base form
     assert asserted_actions("it will be sent") == {}          # future passive
     assert asserted_actions("it has been sent") == {"send": "sent"}  # completed passive
+
+
+# ─── regression: third-party SUBJECT did it, not the assistant ──────────────
+# Found by an external PoC (2026-06): "The system emailed…" wrongly fired
+# because the third-party guard only covered passive/agent forms.
+
+@pytest.mark.parametrize("text", [
+    "The system emailed the invoice last night.",
+    "The scheduler created the report.",
+    "The cron job posted the update.",
+    "Our backend already sent the confirmation.",
+    "The service has charged the customer.",
+])
+def test_third_party_subject_not_flagged(text):
+    assert asserted_actions(text) == {}
+    assert _flag(text, ["send_email", "create_report", "charge_card", "post_update"]) is None
+
+
+@pytest.mark.parametrize("text,canon", [
+    ("Server updated successfully.", "update"),         # object-fronted, no determiner → still fires
+    ("The system config I updated is live.", "update"),  # "I" is the subject → still fires
+])
+def test_subject_guard_does_not_over_suppress(text, canon):
+    assert canon in asserted_actions(text)
+
+
+# ─── regression: communication-action aliases (notify ≈ send ≈ message) ─────
+
+@pytest.mark.parametrize("text,tool", [
+    ("I notified the team about the outage.", "send_email"),
+    ("I've messaged the customer.", "send_email"),
+    ("Alerted the on-call engineer.", "notify_slack"),
+])
+def test_notify_claim_matches_send_tool(text, tool):
+    sus = _flag(text, [tool])
+    assert sus is not None and sus.tool == tool
+
+
+# ─── regression: dev-idiom completion verbs ─────────────────────────────────
+
+@pytest.mark.parametrize("text,tool", [
+    ("I pushed the update to prod.", "deploy_service"),
+    ("Shipped the new build.", "deploy_service"),
+])
+def test_dev_idioms_flagged(text, tool):
+    sus = _flag(text, [tool])
+    assert sus is not None and sus.tool == tool
