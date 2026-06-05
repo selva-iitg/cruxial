@@ -213,6 +213,7 @@ def test_external_ref_schema_warns():
     "(a+)+$", "(a*)*$", r"(\d+)+$",          # nested quantifier
     "(a|aa)+$", "(x|x)*$", "(ab|a|b)+$",     # alternation overlap
     r"(.*a){20}$", r"(.*a){20,}$",           # fixed/open count
+    "((a)*)*$", "((a+))+$", "(([a-z])+)+$",  # nested-in-group ((...)Q)Q
 ])
 def test_dangerous_patterns_flagged(pattern):
     assert is_dangerous_pattern(pattern)

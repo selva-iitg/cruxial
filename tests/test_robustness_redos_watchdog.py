@@ -37,6 +37,9 @@ def _run(code: str) -> str:
     ("(ab|a|b)+$", "a" * 40 + "!"),
     (r"(.*a){20}$", "a" * 40 + "!"),  # fixed-count brace (no comma)
     (r"(.*a){20,}$", "a" * 40 + "!"),
+    ("((a)*)*$", "a" * 40 + "!"),     # nested-in-group ((...)Q)Q
+    ("((a+))+$", "a" * 40 + "!"),
+    ("(([a-z])+)+$", "a" * 40 + "!"),
 ])
 def test_redos_pattern_does_not_hang(pattern, inp):
     out = _run(f"""

@@ -314,12 +314,66 @@ def _validate_multiple_of(validator, dB, instance, schema):
 # (skip + a loud guard() warning) rather than hang.
 _DANGEROUS_PATTERN = re.compile(r"\([^)]*[+*?|][^)]*\)\s*(?:[+*]|\{\d+,?\d*\})")
 
+def _has_nested_quantifier(pattern: str) -> bool:
+    """Depth-aware scan for nested-quantifier ReDoS — the ((...)Q)Q shape.
+
+    The flat ``_DANGEROUS_PATTERN`` regex uses ``[^)]*`` and so cannot cross a
+    nested ``)``; when the inner unbounded quantifier lives one group deeper it
+    never sees it. This walks paren depth and flags an unbounded-quantified
+    group (``(...)+`` / ``(...)*``) that itself contains an unbounded-quantified
+    sub-expression — the structural cause of exponential backtracking.
+
+    Only ``+`` and ``*`` count here: a bounded ``{n}`` repetition (``(\\d{3})+``)
+    is linear and must stay validated, and the genuinely-dangerous brace cases
+    (``(.*a){20}``) are single-level and already caught by the flat regex.
+    Escapes and character classes are skipped so ``\\(`` and ``[)]`` don't
+    perturb the depth count.
+    """
+    stack = [False]  # per-group: does this group contain an unbounded quantifier?
+    i, n = 0, len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":  # skip a character class wholesale
+            i += 1
+            while i < n:
+                if pattern[i] == "\\":
+                    i += 1
+                elif pattern[i] == "]":
+                    break
+                i += 1
+            i += 1
+            continue
+        if ch == "(":
+            stack.append(False)
+        elif ch == ")":
+            if len(stack) > 1:
+                inner = stack.pop()
+                j = i + 1
+                if j < n and pattern[j] == "?":  # non-greedy / possessive suffix
+                    j += 1
+                quantified = j < n and pattern[j] in "+*"
+                if quantified and inner:
+                    return True
+                if quantified or inner:  # propagate an unbounded child upward
+                    stack[-1] = True
+            else:
+                stack = [False]  # unbalanced ) — reset rather than under/overflow
+        elif ch in "+*":
+            stack[-1] = True
+        i += 1
+    return False
+
 
 def is_dangerous_pattern(pattern: str) -> bool:
     try:
         if len(pattern) > 1000:
             return True  # absurdly long pattern — don't risk running it at all
-        return bool(_DANGEROUS_PATTERN.search(pattern))
+        # Flat check first (cheap; catches alternation + top-level shapes), then
+        # the depth-aware scan for nested ((...)Q)Q that the regex can't reach.
+        return bool(_DANGEROUS_PATTERN.search(pattern)) or _has_nested_quantifier(pattern)
     except Exception:
         return False
 
