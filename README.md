@@ -113,8 +113,8 @@ category — never the raw argument values.
 | `missing_required` | Required field not in args |
 | `type_mismatch` | Wrong type (`int` instead of `str`, etc.) |
 | `enum_violation` | Value not in allowed enum |
-| `format_violation` | Bad email / uri / date format |
-| `constraint_violation` | maxLength / minimum / pattern / etc. |
+| `format_violation` | Bad email / uri / date format, or a `pattern` mismatch |
+| `constraint_violation` | maxLength / minimum / multipleOf / etc. |
 | `extra_field` | Model invented a field that doesn't exist |
 | `unknown_tool` | Tool name not in registry |
 | `tool_bypass` | **Model *claimed* it did something but emitted no call** — "your agent said it sent the email. It didn't." |

@@ -88,7 +88,9 @@ def hash_args(args: dict[str, Any]) -> str:
     try:
         canonical = json.dumps(args, sort_keys=True, default=str)
     except Exception:
-        canonical = repr(sorted(args.items()))
+        # Total fallback: sort by repr so mixed-type keys (e.g. {5: ..., "a": ...})
+        # never raise TypeError on comparison.
+        canonical = repr(sorted((repr(k), repr(v)) for k, v in args.items()))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 

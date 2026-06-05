@@ -2,6 +2,31 @@
 
 All notable changes to Cruxial are documented here. Format: [Keep a Changelog](https://keepachangelog.com); versioning: [SemVer](https://semver.org).
 
+## [0.3.0] — 2026-06-05
+
+Validation-hardening release, closing 13 findings from an external security/correctness review of the validator. No API breaks; validation is stricter (rejects values that were wrongly accepted) and several denial-of-service and SSRF vectors are closed.
+
+### Security
+- **No network during validation.** The validator is pinned to an empty `referencing.Registry()`, so an external schema `$ref` (`http://…`, `file://…`) raises `Unresolvable` instead of being fetched via `urlopen()`. Closes an SSRF / local-file-read / hang vector. In-schema refs (`#/$defs/…`) still resolve. `guard()` now warns at construction when a schema carries an external `$ref` (its validation will fail open).
+- **No validation hangs.** `uniqueItems` is now an O(n) set-based check (stock jsonschema is O(n²), which hangs on large arrays). `pattern` is matched with `google-re2` when the optional `cruxial[re2]` extra is installed; otherwise a static guard detects catastrophic-backtracking patterns and skips them rather than hang (with a loud `guard()` warning). Both restore the `<1ms` / fail-open promises against adversarial schemas.
+
+### Fixed
+- **Impossible dates/times accepted** — `format:date`/`time`/`date-time` now validate real calendar/clock values, not just digit shape: `2026-02-30`, `25:61:61` are rejected; leap day `2024-02-29` and leap second `23:59:60` stay valid.
+- **`NaN`/`Infinity` accepted as `number`** — the `number`/`integer` type checks now require a finite value (they previously serialised to invalid JSON downstream).
+- **`multipleOf` false-positive** — `0.3` against `multipleOf: 0.1` is no longer wrongly rejected; the check uses exact `Decimal` arithmetic instead of IEEE-754 float modulo (removes a needless repair loop).
+- **Lenient `format:email`** — a structural, ReDoS-safe checker rejects `a@`, `@b.com`, `a b@c.com`, `a@b@c.com`.
+- **Invalid schema silently disabled validation** — `guard()` now runs `Draft202012Validator.check_schema()` at construction: it raises under `strict=True` (default) and warns under `strict=False`, instead of failing open silently at runtime with no signal.
+- **`pattern` category** — documented as `format_violation` (matching the classifier); the README category table previously listed it under `constraint_violation`.
+- **`hash_args` could raise on mixed-type keys** (`{5: …, "a": …}`) — the telemetry fallback is now total.
+
+### Added
+- **`GuardConfig.strict_properties`** (default `False`) — inject `additionalProperties:false` into every object subschema that enumerates `properties` and hasn't declared openness, so a hallucinated extra field is caught even when the tool schema didn't close itself. Off by default so an intentionally-open schema is never silently over-constrained.
+- **`GuardConfig.uri_schemes`** (default `None`) — an opt-in allowlist for `format:uri` fields. By default, the pseudo-schemes that are never a legitimate tool argument (`javascript:`, `data:`, `vbscript:`) are denied; `file:` is allowed by default (legitimate for file-handling tools) but can be excluded with an allowlist. With an allowlist set, any scheme outside it is a `format_violation`.
+- **`cruxial[re2]`** optional extra — linear-time `pattern` validation.
+
+### Note
+- `maxLength` counts Unicode code points, not bytes (spec-correct) — e.g. 10 emoji satisfy `maxLength:10` but are 40 UTF-8 bytes. Size DB columns / downstream limits accordingly.
+
 ## [0.2.1] — 2026-06-05
 
 ### Fixed
@@ -45,6 +70,7 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.3.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.3.0
 [0.2.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.1
 [0.2.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.0
 [0.1.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.3

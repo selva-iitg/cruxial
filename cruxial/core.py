@@ -32,7 +32,12 @@ from cruxial.telemetry import (
     utc_now,
 )
 from cruxial.types import ExecutionResult, Failure, InterceptionRecord
-from cruxial.validator import validate as _validate
+from cruxial.validator import (
+    close_open_objects,
+    external_refs,
+    is_dangerous_pattern,
+    validate as _validate,
+)
 
 
 # ─── public surface ─────────────────────────────────────────────────────
@@ -55,6 +60,74 @@ class GuardConfig:
     #                               "missing_required" or "extra_field"
     #                               failures may not be the model's fault.
     schema_origin: str = "model_visible"
+    # If True, inject `additionalProperties: false` into every object subschema
+    # that enumerates `properties` and hasn't declared openness — so a
+    # hallucinated extra field is caught even when the tool schema didn't close
+    # itself (most OpenAI/Anthropic schemas don't). Off by default so an
+    # intentionally-open schema is never silently over-constrained.
+    strict_properties: bool = False
+    # Optional allowlist of URI schemes for `format: uri` fields (e.g.
+    # ("http", "https")). When set, any other scheme is a format_violation. By
+    # default only the dangerous pseudo-schemes (javascript/data/file/…) are
+    # denied; everything else passes.
+    uri_schemes: tuple[str, ...] | None = None
+
+
+def _check_schemas(schemas: Mapping[str, dict[str, Any]], *, strict: bool) -> None:
+    """Validate each registered schema at construction (closes the silent-disable
+    finding: a malformed schema otherwise fails open at runtime — every call
+    passes — with no signal). Raises under strict=True; warns otherwise. Also
+    warns on external `$ref`s (which resolve locally only, so they fail open)
+    and on catastrophic-backtracking `pattern`s (which can't run without re2).
+    """
+    from jsonschema import Draft202012Validator
+
+    for name, schema in schemas.items():
+        try:
+            Draft202012Validator.check_schema(schema)
+        except Exception as exc:  # noqa: BLE001
+            msg = (
+                f"cruxial: schema for tool {name!r} is not a valid JSON Schema "
+                f"({type(exc).__name__}: {exc}). Validation for this tool would fail "
+                "open (every call passes). Fix the schema."
+            )
+            if strict:
+                raise ValueError(msg) from exc
+            warnings.warn(msg, stacklevel=3)
+            continue
+        for ref in external_refs(schema):
+            warnings.warn(
+                f"cruxial: schema for tool {name!r} has an external $ref {ref!r}. "
+                "Cruxial resolves refs locally only (no network, for safety), so this "
+                "tool's validation will fail open. Inline it or use #/$defs.",
+                stacklevel=3,
+            )
+        for patrn in _schema_patterns(schema):
+            if is_dangerous_pattern(patrn):
+                warnings.warn(
+                    f"cruxial: schema for tool {name!r} has a regex pattern {patrn!r} "
+                    "that can catastrophically backtrack. Without cruxial[re2] this "
+                    "pattern is skipped at validation (not run) to avoid a hang.",
+                    stacklevel=3,
+                )
+
+
+def _schema_patterns(schema: Any) -> list[str]:
+    out: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            p = node.get("pattern")
+            if isinstance(p, str):
+                out.append(p)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for x in node:
+                walk(x)
+
+    walk(schema)
+    return out
 
 
 def guard(
@@ -148,6 +221,13 @@ class Cruxial:
         sink: Sink,
         config: GuardConfig,
     ):
+        # Opt-in: close open object schemas so hallucinated extra fields are
+        # caught even when the author didn't set additionalProperties:false.
+        if config.strict_properties:
+            schemas = {name: close_open_objects(s) for name, s in schemas.items()}
+        # Validate schemas at construction — turns a silent-disable into a loud
+        # signal (raises under strict, warns otherwise).
+        _check_schemas(schemas, strict=config.strict)
         self.schemas = schemas
         self.executors = executors
         self.sink = sink
@@ -370,6 +450,12 @@ class Cruxial:
 
         origin = schema_origin or self.config.schema_origin
 
+        if self.config.strict_properties:
+            schemas = {name: close_open_objects(s) for name, s in schemas.items()}
+        # Same construction-time hygiene as guard(): loud signal on a bad or
+        # external-ref schema instead of a silent runtime fail-open.
+        _check_schemas(schemas, strict=self.config.strict)
+
         for name, schema in schemas.items():
             self.schemas[name] = schema
             self._schema_hashes[name] = hash_schema(schema)
@@ -454,7 +540,7 @@ class Cruxial:
 
     def _fail_open_validate(self, name, args, schema):
         try:
-            return _validate(name, args, schema)
+            return _validate(name, args, schema, uri_schemes=self.config.uri_schemes)
         except BaseException as exc:  # noqa: BLE001
             if not self.config.fail_open:
                 raise
