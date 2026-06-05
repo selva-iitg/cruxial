@@ -29,14 +29,23 @@ def _run(code: str) -> str:
     return r.stdout.strip()
 
 
-def test_redos_pattern_does_not_hang():
-    out = _run("""
+@pytest.mark.parametrize("pattern,inp", [
+    ("(a+)+$", "a" * 40 + "!"),       # nested quantifier
+    ("(a*)*$", "a" * 40 + "!"),
+    ("(a|aa)+$", "a" * 40 + "!"),     # alternation overlap
+    ("(x|x)*$", "x" * 40 + "!"),
+    ("(ab|a|b)+$", "a" * 40 + "!"),
+    (r"(.*a){20}$", "a" * 40 + "!"),  # fixed-count brace (no comma)
+    (r"(.*a){20,}$", "a" * 40 + "!"),
+])
+def test_redos_pattern_does_not_hang(pattern, inp):
+    out = _run(f"""
         import warnings; warnings.simplefilter('ignore')
         from cruxial import guard, GuardConfig
-        g = guard(schemas={'lookup': {'type':'object','properties':{
-                      'code':{'type':'string','pattern':'(a+)+$'}}}},
-                  executors={'lookup': lambda **k:'ran'}, config=GuardConfig(sinks=('null',)))
-        r = g.execute('lookup', {'code':'a'*40+'!'})
+        g = guard(schemas={{'lookup': {{'type':'object','properties':{{
+                      'code':{{'type':'string','pattern':{pattern!r}}}}}}}}},
+                  executors={{'lookup': lambda **k:'ran'}}, config=GuardConfig(sinks=('null',)))
+        r = g.execute('lookup', {{'code': {inp!r}}})
         print('OK', r.ok)
     """)
     assert out.startswith("OK")

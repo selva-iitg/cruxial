@@ -304,15 +304,21 @@ def _validate_multiple_of(validator, dB, instance, schema):
         )
 
 
-# Heuristic for catastrophic backtracking: a quantified group whose body itself
-# contains a quantifier, e.g. (a+)+, (a*)*, (.+)+, (x+){2,}. Not exhaustive —
-# re2 is the real guarantee — but it catches the common ReDoS shape so we refuse
-# to run it rather than hang.
-_DANGEROUS_PATTERN = re.compile(r"\([^)]*[+*][^)]*\)\s*(?:[+*]|\{\d+,\d*\})")
+# Heuristic for catastrophic backtracking: a quantified group — ( (...)+, (...)*,
+# (...){n}, (...){n,}, (...){n,m} ) — whose body contains a quantifier (+ * ?) OR
+# an alternation (|). That covers the shapes that actually blow up: nested
+# quantifiers ((a+)+), alternation overlap ((a|aa)+, (x|x)*, (ab|a|b)+), and
+# fixed/open counts ((.*a){20}, (.*a){20,}). A plain quantified group like (abc)+
+# is linear and stays validated (not over-suppressed). Not exhaustive — re2 is
+# the real guarantee — so when re2 is absent we refuse to RUN a flagged pattern
+# (skip + a loud guard() warning) rather than hang.
+_DANGEROUS_PATTERN = re.compile(r"\([^)]*[+*?|][^)]*\)\s*(?:[+*]|\{\d+,?\d*\})")
 
 
 def is_dangerous_pattern(pattern: str) -> bool:
     try:
+        if len(pattern) > 1000:
+            return True  # absurdly long pattern — don't risk running it at all
         return bool(_DANGEROUS_PATTERN.search(pattern))
     except Exception:
         return False

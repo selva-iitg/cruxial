@@ -12,7 +12,12 @@ import pytest
 
 from cruxial import GuardConfig, guard
 from cruxial.telemetry import hash_args
-from cruxial.validator import close_open_objects, external_refs, validate
+from cruxial.validator import (
+    close_open_objects,
+    external_refs,
+    is_dangerous_pattern,
+    validate,
+)
 
 _NULL = GuardConfig(sinks=("null",))
 
@@ -200,6 +205,30 @@ def test_external_ref_schema_warns():
         guard(schemas={"t": {"type": "object", "properties": {"x": {"$ref": "http://x/y"}}}},
               executors={"t": lambda **k: "r"}, config=_NULL)
     assert any("external $ref" in str(x.message) for x in w)
+
+
+# ─── #1 — ReDoS heuristic (catches alternation + {n}, not just nested) ───────
+
+@pytest.mark.parametrize("pattern", [
+    "(a+)+$", "(a*)*$", r"(\d+)+$",          # nested quantifier
+    "(a|aa)+$", "(x|x)*$", "(ab|a|b)+$",     # alternation overlap
+    r"(.*a){20}$", r"(.*a){20,}$",           # fixed/open count
+])
+def test_dangerous_patterns_flagged(pattern):
+    assert is_dangerous_pattern(pattern)
+
+
+@pytest.mark.parametrize("pattern", [
+    "(abc)+", r"(\w)+$", r"(\d{3})+", "^[a-z]+$", r"^\d{3}-\d{4}$",
+    "^(https?)://.+$", r"[A-Z]{2}\d{4}",
+])
+def test_safe_patterns_not_flagged(pattern):
+    # safe quantified groups stay validated (not skipped) — precision first
+    assert not is_dangerous_pattern(pattern)
+
+
+def test_overlong_pattern_treated_as_dangerous():
+    assert is_dangerous_pattern("a" * 1001)
 
 
 # ─── #13 — hash_args total on mixed-type keys ────────────────────────────────
