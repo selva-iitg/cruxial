@@ -201,11 +201,11 @@ _ACTION_ALIASES: dict[str, frozenset[str]] = {
 _COORD = {"and", "or", "then", "also", "plus", "but"}
 
 
-def _governing_subject(tokens: list[str], i: int) -> tuple[str, str]:
+def _governing_subject(tokens: list[str], i: int) -> tuple[str, int]:
     """Walk back from the verb at index i past coordinating conjunctions, other
     completion verbs, and auxiliaries to the token that governs it — the subject
     in a compound predicate like "the manager approved and charged". Returns
-    (subject, token-before-subject); ("", "") if none is within reach.
+    (subject, its index); ("", -1) if none is within reach.
     """
     j, steps = i - 1, 0
     while j >= 0 and steps < 6:
@@ -214,8 +214,29 @@ def _governing_subject(tokens: list[str], i: int) -> tuple[str, str]:
             j -= 1
             steps += 1
             continue
-        return w, (tokens[j - 1] if j >= 1 else "")
-    return "", ""
+        return w, j
+    return "", -1
+
+
+def _np_determiner_led(tokens: list[str], subj_idx: int) -> bool:
+    """True if a determiner (incl. a possessive second-person like "your")
+    introduces the noun phrase headed by tokens[subj_idx], allowing intervening
+    modifier tokens — adjectives or hyphen-split fragments. "the on-call
+    engineer" tokenizes to the/on/call/engineer, so the determiner sits 3 tokens
+    back from the subject, not adjacent. Stops at anything that breaks a noun
+    phrase (a verb, a coordinator, a future/negation marker, a pronoun).
+    """
+    j, steps = subj_idx - 1, 0
+    while j >= 0 and steps < 4:
+        w = tokens[j]
+        if w in _DETERMINERS or w in _SECOND_PERSON:
+            return True
+        if (w in _COMPLETION_TO_CANON or w in _COORD
+                or w in _NON_COMPLETION_MARKERS or w in _THIRD_PARTY_PRONOUNS):
+            return False
+        j -= 1
+        steps += 1
+    return False
 
 
 def asserted_actions(text: str) -> dict[str, str]:
@@ -256,11 +277,11 @@ def asserted_actions(text: str) -> dict[str, str]:
         if prev1 in _THIRD_PARTY_AUX and prev2 in _THIRD_PARTY_SUBJECTS and prev3 in _DETERMINERS:
             continue  # "the system has emailed", "my colleague already created"
         # compound predicate: find the governing subject past "and"/coordinated verbs
-        subj, det = _governing_subject(tokens, i)
+        subj, subj_idx = _governing_subject(tokens, i)
         if subj in _SECOND_PERSON or subj in _THIRD_PARTY_PRONOUNS:
             continue  # "your manager approved and charged", "she created and sent"
-        if subj in _THIRD_PARTY_SUBJECTS and (det in _DETERMINERS or det in _SECOND_PERSON):
-            continue
+        if subj in _THIRD_PARTY_SUBJECTS and _np_determiner_led(tokens, subj_idx):
+            continue  # "the on-call engineer posted", "my colleague created and sent"
         out[canon] = word
     return out
 

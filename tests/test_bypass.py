@@ -124,6 +124,22 @@ def test_subject_guard_does_not_over_suppress(text, canon):
     assert canon in asserted_actions(text)
 
 
+# ─── regression: hyphenated / multi-word titles displace the determiner ─────
+# Found by an external PoC (2026-06): "The on-call engineer posted…" fired
+# because "on-call" tokenizes to on/call, pushing "the" outside the 1-token
+# window. The subject guard now scans back across modifier fragments.
+
+@pytest.mark.parametrize("text", [
+    "The on-call engineer posted the message.",
+    "Our off-site contractor sent the invoice.",
+    "The senior staff engineer created the ticket.",
+    "Your on-call engineer already deleted the record.",  # 2nd-person possessive past the window
+])
+def test_hyphenated_title_subject_not_flagged(text):
+    assert asserted_actions(text) == {}
+    assert _flag(text, ["post_message", "send_email", "create_ticket", "delete_record"]) is None
+
+
 # ─── regression: communication-action aliases (notify ≈ send ≈ message) ─────
 
 @pytest.mark.parametrize("text,tool", [
