@@ -145,8 +145,12 @@ declines (we do nothing). We only ever act on a model-confirmed re-emission, so
 we never fabricate an action.
 
 Benchmarked on a 132-scenario adversarial set (see [BENCHMARKS.md](BENCHMARKS.md)):
-**100% correction recall**, **acted-on precision 100% (Claude sonnet-4-6) / 98.4%
-(gpt-4o)**. Set `bypass="off"` to disable; `bypass="strict"` for a 2-call variant.
+**0 false actions** — acted-on precision **100%** (Claude sonnet-4-6 and gpt-4o), with
+100% correction recall *on that set*. The detector is precision-first by design: it
+fires on completion-form verbs, so terse or idiomatic claims ("Done.", "Email's out.")
+are a documented recall gap. Treat it as a high-quality net to run alongside your other
+safeguards — not a complete bypass guarantee. Set `bypass="off"` to disable;
+`bypass="strict"` for a 2-call variant.
 
 ## Auto-repair
 

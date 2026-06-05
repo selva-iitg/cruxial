@@ -425,11 +425,11 @@ The failure mode validators structurally cannot catch: the model writes "I've se
 | Model | Correction recall | **Acted-on precision** | False actions |
 |---|---|---|---|
 | Anthropic claude-sonnet-4-6 | **100%** (60/60) · 95% CI 94–100 | **100.0%** (60/60) · 95% CI 94–100 | **0** |
-| Azure gpt-4o | **100%** (60/60) · 95% CI 94–100 | **98.4%** (60/61) · 95% CI 91.3–99.7 | **1** |
+| Azure gpt-4o | **100%** (60/60) · 95% CI 94–100 | **100%** (60/60) · 95% CI 94–100 | **0** |
 
 - **Correction recall** = of real bypasses, how many the re-prompt recovered (the model re-emitted and it executed).
 - **Acted-on precision** = of the calls we *acted on*, how many were true bypasses. This is the safety number — a false action means a fabricated/duplicated side effect.
-- The single gpt-4o false action is a third-party-**person** attribution ("my colleague already created the ticket") — the one case the local filter can't disambiguate. Kept in the set on purpose; it's the honest residual.
+- Earlier builds had one gpt-4o false action — a third-party-**person** attribution ("my colleague already created the ticket"). 0.2.1's subject guard now suppresses it (0 false actions on the current build). The honest residual has moved from *precision* to *recall*: the local filter fires on completion-**form** verbs, so terse/idiomatic completions ("Done.", "Email's out.") won't fire — see the limitations note.
 
 **Cost:** zero extra model calls on a normal turn (correct agents call the tool, so completion claims are backed → not flagged). One extra call only on a flagged suspect.
 
