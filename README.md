@@ -65,10 +65,9 @@ for tool_call in llm_response.tool_calls:
     result = cruxial.execute(tool_call.name, args)
 
     if not result.ok:
-        # A not-ok result always carries result.failure (so result.failure.category
-        # never AttributeErrors): a validation category like "type_mismatch", or
-        # "executor_error" when your tool raised — the raw exception is on result.error.
-        result.raise_on_failure()        # raises the right typed error for either case
+        # result.failure.category says why (e.g. "type_mismatch"); for an executor
+        # error the raw exception is on result.error.
+        result.raise_on_failure()        # raises the right typed error either way
 
     use(result.value)
 ```
@@ -98,10 +97,10 @@ while not result.finished:  # your loop stays yours — one model call per turn
 print(result.text)          # the model's final answer
 ```
 
-It reuses your already-configured client (your Azure endpoint/version, base_url, and
-timeouts are all preserved), derives schemas from `tools`, and fails open. It is
-deliberately **one turn, not a framework**: no streaming and no multi-turn ownership, so
-you decide when to stop. Need to own execution yourself? Drop to `guard().check()` / `.execute()`.
+It reuses your configured client (Azure endpoint, `base_url`, timeouts all preserved),
+derives schemas from `tools`, and fails open. Deliberately **one turn, not a framework** —
+no streaming, no multi-turn ownership, you decide when to stop. Need to own execution?
+Drop to `guard().check()` / `.execute()`.
 
 ## What it catches
 
@@ -144,13 +143,11 @@ re-prompt** — the model either re-emits the call (corrected + executed) or
 declines (we do nothing). We only ever act on a model-confirmed re-emission, so
 we never fabricate an action.
 
-Benchmarked on a 132-scenario adversarial set (see [BENCHMARKS.md](BENCHMARKS.md)):
-**0 false actions** — acted-on precision **100%** (Claude sonnet-4-6 and gpt-4o), with
-100% correction recall *on that set*. The detector is precision-first by design: it
-fires on completion-form verbs, so terse or idiomatic claims ("Done.", "Email's out.")
-are a documented recall gap. Treat it as a high-quality net to run alongside your other
-safeguards — not a complete bypass guarantee. Set `bypass="off"` to disable;
-`bypass="strict"` for a 2-call variant.
+Benchmarked on a 132-scenario adversarial set ([BENCHMARKS.md](BENCHMARKS.md)):
+**0 false actions**, acted-on precision **100%** (sonnet-4-6 and gpt-4o), 100% correction
+recall *on that set*. It's precision-first — it fires on completion-form verbs, so terse
+claims ("Done.", "Email's out.") are a documented recall gap: a high-quality net, not a
+complete guarantee. `bypass="off"` disables it; `bypass="strict"` is a 2-call variant.
 
 ## Auto-repair
 
@@ -190,13 +187,10 @@ machine). To see your real rate:
 cruxial stats
 ```
 
-**Stats are project-local automatically.** When you run `cruxial stats` from
-inside a project (any directory with `.git/`, `pyproject.toml`, `setup.py`,
-or `.cruxial/`), the database lives at `./.cruxial/telemetry.sqlite` —
-keeping each app's stats separate. Outside a project it falls back to
-`~/.cruxial/telemetry.sqlite`. Override either with the
-`CRUXIAL_DB_PATH=/some/path` env var (respected by both the SDK and the
-CLI). Run `cruxial diagnostic` to see which path is in effect.
+**Stats are project-local automatically** — inside a project (a dir with `.git/`,
+`pyproject.toml`, `setup.py`, or `.cruxial/`) the DB lives at `./.cruxial/telemetry.sqlite`,
+so each app stays separate; elsewhere it falls back to `~/.cruxial/`. Override with
+`CRUXIAL_DB_PATH`; `cruxial diagnostic` shows the active path.
 
 Output:
 
@@ -220,6 +214,17 @@ top failure categories
   format_violation                    24
   constraint_violation                16
 ```
+
+`cruxial stats` also shows the registry independently of traffic — handy for the
+"is it even on?" check after install:
+
+```
+  registry              6 registered  ·  3 fired  ·  1 intercepted
+```
+
+Traffic but 0 interceptions usually means a well-behaved model on a simple schema —
+`cruxial.testing.violation_payloads(schema)` fires a synthetic violation per category
+to verify end-to-end.
 
 ## How it works
 
@@ -249,46 +254,22 @@ sequenceDiagram
 Cruxial wraps the **tool registry**, not the LLM client. No monkey-patching,
 no proxies, no framework lock-in.
 
-## Schema source — read this if your LLM sees a trimmed schema
+## Schema source — if your LLM sees a trimmed schema
 
-If your code maintains TWO views of each tool schema (a **canonical** full
-one used internally for execution, and a **trimmed view** sent to the LLM,
-the L1 / model-visible schema), register the trimmed one with Cruxial, not
-the canonical.
-
-Why: the LLM can only satisfy the schema it was shown. If the canonical
-has fields the LLM never saw, `missing_required` and `extra_field`
-interceptions become false positives. The model didn't fail; you just
-validated against the wrong contract.
+If you keep two views of a tool schema — a **canonical** one for execution and a
+**trimmed** one sent to the LLM — register the *trimmed* one. The LLM can only satisfy
+the schema it was shown; validating against canonical fields it never saw turns
+`missing_required` / `extra_field` into false positives.
 
 ```python
 # Right
 cruxial = guard(schemas=tool_definitions_sent_to_llm)
 
-# If you must register the canonical schema, opt in explicitly:
-cruxial = guard(
-    schemas=canonical_definitions,
-    config=GuardConfig(schema_origin="canonical"),  # warns + tags every row
-)
+# Must use the canonical schema? Opt in — validation is unchanged, but it warns at
+# construction and tags every telemetry row (visible in `cruxial stats`) to filter later:
+cruxial = guard(schemas=canonical_definitions,
+                config=GuardConfig(schema_origin="canonical"))
 ```
-
-`schema_origin="canonical"` does NOT change validation logic — it just
-emits a warning at construction, tags every telemetry row, and surfaces
-a notice in `cruxial stats` so you can later filter out the false
-positives if you decide to.
-
-## See it's wired up
-
-`cruxial stats` shows the registry independently of traffic:
-
-```
-  registry              6 registered  ·  3 fired  ·  1 intercepted
-```
-
-Useful for the "is it even on?" moment after first install. If you see
-traffic but 0 interceptions, that's usually a well-behaved model on a
-simple schema — `cruxial.testing.violation_payloads(schema)` lets you
-fire a synthetic violation per category to verify end-to-end.
 
 ## Privacy
 
@@ -317,6 +298,16 @@ class SendEmail(BaseModel):
 cruxial = guard_models({"send_email": SendEmail}, executors={"send_email": send_email})
 tools   = [tool_schema(SendEmail, name="send_email")]                       # OpenAI format
 # tools = [tool_schema(SendEmail, name="send_email", provider="anthropic")]  # Anthropic
+```
+
+Works with `run()` too — `run()` derives the schema from `tools`, so the whole
+managed turn (validate → execute → auto-repair) runs against your model:
+
+```python
+from cruxial import run
+run(client, model="gpt-4o", messages=msgs,
+    tools=[tool_schema(SendEmail, name="send_email")],
+    executors={"send_email": send_email})
 ```
 
 Nested models and enums (Pydantic's `$defs`/`$ref`) validate end to end. The
