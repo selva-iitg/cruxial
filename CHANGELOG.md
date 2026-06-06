@@ -2,6 +2,17 @@
 
 All notable changes to Cruxial are documented here. Format: [Keep a Changelog](https://keepachangelog.com); versioning: [SemVer](https://semver.org).
 
+## [0.4.0] — 2026-06-07
+
+Adds a Pydantic adapter so you can define tools as Pydantic v2 models instead of hand-written JSON Schema. Additive and backward-compatible — no API breaks, and Pydantic is never required by the core (it's an optional, lazily-imported extra).
+
+### Added
+- **`cruxial.adapters.pydantic`** (optional `cruxial[pydantic]`, Pydantic v2) — define tools as `BaseModel`s and let cruxial pull their JSON Schema:
+  - `extract_schemas(models)` — model(s) → `{tool_name: schema}`. Accepts a single model, an iterable, or a `{name: Model}` mapping (e.g. snake_case names to match your executor keys).
+  - `guard_models(...)` / `register_models(...)` — build a guard, or extend one, directly from models.
+  - `tool_schema(model, provider="openai" | "anthropic")` — emit the provider tool-call definition from the **same** model, so the LLM tool schema and the runtime guard share one source of truth and can't drift.
+  Nested models and enums (Pydantic's `$defs`/`$ref`) validate end to end, including nested constraints — the validator resolves in-schema refs with no network hop. The import is lazy: `import cruxial` never loads Pydantic.
+
 ## [0.3.0] — 2026-06-05
 
 First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `executor_error`) never shipped to PyPI and is rolled up here, alongside a validator security/correctness hardening pass that closes 13 findings from an external review. No API breaks; validation is stricter (rejects values that were wrongly accepted) and several denial-of-service and SSRF vectors are closed.
@@ -64,6 +75,7 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.4.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.0
 [0.1.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.3

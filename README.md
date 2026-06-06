@@ -298,7 +298,31 @@ timing. **Never the argument values themselves.** Hashes only.
 The interceptor runs in your process. Your data never leaves your
 infrastructure unless you opt into Cruxial Cloud (coming soon).
 
-## What ships today (v0.2)
+## Define tools as Pydantic models
+
+Already model your tools with Pydantic? Skip the hand-written JSON Schema —
+cruxial extracts it for you. Optional: `pip install cruxial[pydantic]` (v2).
+
+```python
+from pydantic import BaseModel, Field
+from cruxial.adapters.pydantic import guard_models, tool_schema
+
+class SendEmail(BaseModel):
+    """Send an email to a recipient."""
+    to: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    subject: str = Field(min_length=1, max_length=200)
+    body: str
+
+# One source of truth → both the runtime guard and the LLM tool definition
+cruxial = guard_models({"send_email": SendEmail}, executors={"send_email": send_email})
+tools   = [tool_schema(SendEmail, name="send_email")]                       # OpenAI format
+# tools = [tool_schema(SendEmail, name="send_email", provider="anthropic")]  # Anthropic
+```
+
+Nested models and enums (Pydantic's `$defs`/`$ref`) validate end to end. The
+adapter is lazy and optional — cruxial's core never requires Pydantic.
+
+## What ships today (v0.4)
 
 - ✅ Python SDK
 - ✅ OpenAI + **Azure OpenAI** + Anthropic + LiteLLM (auto via normalization)
@@ -310,12 +334,13 @@ infrastructure unless you opt into Cruxial Cloud (coming soon).
 - ✅ Fail-open by default
 - ✅ `cruxial.run()` — one managed turn (OpenAI / Azure / Anthropic / LiteLLM)
 - ✅ **`tool_bypass` detection** — the claimed-but-never-called catch
+- ✅ **Pydantic adapter** — define tools as Pydantic models (`cruxial[pydantic]`)
 
 Coming:
 - TypeScript SDK
 - LangChain, LlamaIndex, AutoGen adapters
 - Hosted dashboard with cross-customer schema drift alerts
-- Pydantic / Zod custom validators
+- Zod (TypeScript) validators
 
 ## Questions or feedback?
 

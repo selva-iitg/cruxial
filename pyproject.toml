@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxial"
-version = "0.3.0"
+version = "0.4.0"
 description = "The reliability layer for LLM tool calls. Intercepts every call, validates arguments against your schema, auto-repairs hallucinated args before execution."
 readme = "README.md"
 license = { text = "MIT" }
@@ -39,6 +39,9 @@ dependencies = [
 openai = ["openai>=1.40"]
 anthropic = ["anthropic>=0.40"]
 mcp = ["mcp>=1.0"]
+# Define tools as Pydantic models; cruxial extracts their JSON Schema for
+# validation. Adapter only — Pydantic is never required by the core.
+pydantic = ["pydantic>=2"]
 # Linear-time regex engine for `pattern` validation. Optional: without it,
 # catastrophic-backtracking patterns are statically detected and skipped (never
 # run) so they can't hang. With it, every pattern is matched in linear time.
@@ -49,6 +52,7 @@ dev = [
     "openai>=1.40",
     "anthropic>=0.40",
     "mcp>=1.0",
+    "pydantic>=2",
 ]
 
 [project.scripts]
