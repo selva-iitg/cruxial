@@ -4,6 +4,12 @@ Thanks for helping make LLM tool calls more reliable. Cruxial is small,
 dependency-light, and intentionally so — please keep changes minimal and in
 the style of the surrounding code.
 
+## Reporting bugs & ideas
+
+Found a bug or have an idea? [Open an issue](https://github.com/cruxial-ai/cruxial/issues)
+with a minimal repro, your `cruxial` and Python versions, and the failure category if
+relevant. **Security issues:** don't file a public issue — follow [SECURITY.md](SECURITY.md).
+
 ## Dev setup
 
 ```bash
@@ -11,7 +17,7 @@ git clone https://github.com/cruxial-ai/cruxial.git
 cd cruxial
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"      # installs pytest + openai + anthropic + mcp extras
+pip install -e ".[dev]"      # pytest + openai + anthropic + mcp + pydantic extras
 pytest -q                     # should be all green
 cruxial demo                  # offline sanity check
 ```
@@ -49,17 +55,28 @@ them if you touch the execution path.
 - Every telemetry row stores hashes only — never raw argument values.
 - New behavior gets a test that maps to a real contract or failure mode.
 
+## Pull requests
+
+- For anything non-trivial, open an issue first so we agree on the approach before
+  you build.
+- Fork, branch, and keep the PR small and focused on one change.
+- `pytest -q` must be green, and new behavior needs a test (see the fail-open rule above).
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) —
+  `feat:` / `fix:` / `docs:` / `test:` — and stay concise.
+- Review looks for: fail-open preserved, no new runtime deps, hashes-only telemetry,
+  and tests that map to a real contract.
+
 ## Project layout
 
 ```
 cruxial/            the SDK (the thing that ships on PyPI)
   core.py           guard() — the public primitive
   validator.py      jsonschema wrapper + strict format checkers
-  classifier.py     raw error → one of 7 failure categories
+  classifier.py     raw error → one of 7 schema failure categories
   repair.py         builds the repair prompt
   telemetry.py      sinks + hashing + db-path resolution
   cli.py            the `cruxial` command (stats / demo / diagnostic)
-  adapters/         openai, anthropic, mcp (optional)
+  adapters/         openai, anthropic, mcp, pydantic (optional)
   testing.py        synthetic payload generators
   demo/             shipped demo + mined MCP schemas
 tests/              offline test suite (see tests/README.md)
