@@ -198,6 +198,118 @@ def run(
     )
 
 
+async def arun(
+    client: Any,
+    *,
+    model: str,
+    messages: list[Any],
+    tools: list[dict[str, Any]],
+    executors: Mapping[str, Callable[..., Any]],
+    repair: bool = True,
+    bypass: str = "on",
+    side_effecting: list[str] | None = None,
+    provider: str = "auto",
+    guard: Cruxial | None = None,
+    config: GuardConfig | None = None,
+    **create_kwargs: Any,
+) -> RunResult:
+    """Async twin of ``run()`` — for ``AsyncOpenAI`` / async Anthropic clients and
+    async tool executors. Same contract; every model call and tool execution is
+    awaited. See ``run()`` for the full semantics. Mirrors ``run()`` step-for-step.
+    """
+    if create_kwargs.get("stream"):
+        raise ProviderUnsupported(
+            "cruxial.arun() does not support streaming. Stream the call yourself "
+            "and validate each tool call with guard().aexecute() in your handler."
+        )
+
+    client, strat = _resolve(client, provider)
+
+    cx = guard or _guard(
+        schemas=strat.extract_schemas(tools),
+        executors=dict(executors),
+        config=config or GuardConfig(),
+    )
+
+    resp = await strat.acreate(client, model, messages, tools, create_kwargs)
+    assistant_msg, calls, text = strat.parse(resp)
+
+    new_messages = list(messages)
+    new_messages.append(assistant_msg)
+
+    bypass_finding: BypassSuspicion | None = None
+    if not calls:
+        suspicion = None
+        if bypass != "off":
+            names, descs = _tool_meta(tools)
+            suspicion = detect_bypass(
+                text, tool_calls_this_turn=[], tool_names=names,
+                called_tools=_called_tools(messages),
+                side_effecting=side_effecting, descriptions=descs,
+            )
+        if suspicion is not None:
+            corrected = await _attempt_correction_async(
+                strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
+            if corrected is not None:
+                n_assistant, n_calls, n_text = corrected
+                bypass_finding = suspicion
+                assistant_msg, calls, text = n_assistant, n_calls, n_text
+                new_messages = list(messages) + [assistant_msg]
+                if hasattr(cx, "record_bypass"):
+                    cx.record_bypass(suspicion.tool)
+
+    if not calls:
+        return RunResult(
+            messages=new_messages, text=text, tool_calls=[], finished=True,
+            bypass=None,
+            stats={"passed": 0, "intercepted": 0, "repaired": 0, "bypass": 0},
+        )
+
+    outcomes: list[_Outcome] = []
+    for c in calls:
+        res = await cx.aexecute(c["name"], c["args"])
+        outcomes.append(_Outcome(
+            id=c["id"], name=c["name"], args=c["args"],
+            ok=res.ok, value=res.value if res.ok else None,
+            failure=res.failure if not res.ok else None,
+            repair_prompt=(
+                cx.build_repair_prompt(res.failure, c["args"])
+                if (not res.ok and res.failure) else None
+            ),
+        ))
+
+    failed = [o for o in outcomes if not o.ok]
+    if failed and repair:
+        try:
+            corrected = await strat.arepair(client, model, new_messages, tools, outcomes, create_kwargs)
+        except Exception:
+            corrected = {}
+        for o in failed:
+            new_args = corrected.get(o.id)
+            if new_args is None:
+                continue
+            retry = await cx.aexecute_repaired(o.name, new_args)
+            if retry.ok:
+                o.ok, o.value, o.repaired, o.failure, o.args = True, retry.value, True, None, new_args
+                strat.apply_correction(assistant_msg, o.id, new_args)
+            else:
+                o.failure = retry.failure
+
+    new_messages += strat.tool_result_msgs(outcomes)
+
+    stats = {
+        "passed": sum(1 for o in outcomes if o.ok and not o.repaired),
+        "intercepted": sum(1 for o in outcomes if o.repaired or not o.ok),
+        "repaired": sum(1 for o in outcomes if o.repaired),
+        "bypass": 1 if bypass_finding else 0,
+    }
+    return RunResult(
+        messages=new_messages, text=text,
+        tool_calls=[o.public() for o in outcomes], finished=False,
+        bypass=bypass_finding, stats=stats,
+    )
+
+
 # ─── bypass helpers ────────────────────────────────────────────────────────
 
 
@@ -304,6 +416,31 @@ def _attempt_correction(strat, client, model, ctx_messages, tools, suspicion, mo
     return (n_assistant, n_calls, n_text) if n_calls else None
 
 
+async def _attempt_correction_async(strat, client, model, ctx_messages, tools, suspicion, mode, kwargs):
+    """Async twin of _attempt_correction — awaits the model round-trips."""
+    if mode == "strict":
+        try:
+            needed = await strat.ajudge_needed(client, model, ctx_messages, _judge_prompt(suspicion), kwargs)
+        except Exception:
+            return None
+        if not needed:
+            return None
+        try:
+            n_assistant, n_calls, n_text = await strat.aforced_emit(
+                client, model, ctx_messages, tools, suspicion.tool, kwargs)
+        except Exception:
+            return None
+        return (n_assistant, n_calls, n_text) if n_calls else None
+
+    nudge = {"role": "user", "content": _nudge_text(suspicion)}
+    try:
+        nresp = await strat.acreate(client, model, ctx_messages + [nudge], tools, kwargs)
+        n_assistant, n_calls, n_text = strat.parse(nresp)
+    except Exception:
+        return None
+    return (n_assistant, n_calls, n_text) if n_calls else None
+
+
 # ─── internal outcome record ──────────────────────────────────────────────
 
 
@@ -400,6 +537,12 @@ class _Strategy:
     def judge_needed(self, client, model, messages, prompt, kwargs): raise NotImplementedError
     def forced_emit(self, client, model, messages, tools, tool_name, kwargs): raise NotImplementedError
 
+    # async twins (used by arun) — same shapes, awaited client calls
+    async def acreate(self, client, model, messages, tools, kwargs): raise NotImplementedError
+    async def arepair(self, client, model, messages, tools, outcomes, kwargs): raise NotImplementedError
+    async def ajudge_needed(self, client, model, messages, prompt, kwargs): raise NotImplementedError
+    async def aforced_emit(self, client, model, messages, tools, tool_name, kwargs): raise NotImplementedError
+
 
 class _OpenAIStrategy(_Strategy):
     """OpenAI / Azure OpenAI / LiteLLM-as-client (all OpenAI response-shaped)."""
@@ -475,6 +618,33 @@ class _OpenAIStrategy(_Strategy):
             client, model=model, messages=messages, tools=tools, tool_call_outcomes=payload,
         )
 
+    async def acreate(self, client, model, messages, tools, kwargs):
+        return await client.chat.completions.create(
+            model=model, messages=messages, tools=tools, **kwargs)
+
+    async def ajudge_needed(self, client, model, messages, prompt, kwargs):
+        resp = await client.chat.completions.create(
+            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kwargs)
+        return "NEEDED" in (resp.choices[0].message.content or "").upper()
+
+    async def aforced_emit(self, client, model, messages, tools, tool_name, kwargs):
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=list(messages) + [{"role": "user",
+                "content": f"Call the `{tool_name}` tool now with the appropriate arguments."}],
+            tools=tools, tool_choice={"type": "function", "function": {"name": tool_name}}, **kwargs)
+        return self.parse(resp)
+
+    async def arepair(self, client, model, messages, tools, outcomes, kwargs):
+        from cruxial.adapters.openai import auto_repair_batch_async
+        payload = [
+            {"tool_call_id": o.id, "name": o.name, "ok": o.ok,
+             "value": o.value, "failure": o.failure, "repair_prompt": o.repair_prompt}
+            for o in outcomes
+        ]
+        return await auto_repair_batch_async(
+            client, model=model, messages=messages, tools=tools, tool_call_outcomes=payload)
+
 
 class _AnthropicStrategy(_Strategy):
     """Anthropic Messages API — input_schema + tool_use / tool_result blocks."""
@@ -547,12 +717,14 @@ class _AnthropicStrategy(_Strategy):
             blocks.append(block)
         return [{"role": "user", "content": blocks}]
 
-    def repair(self, client, model, messages, tools, outcomes, kwargs):
+    def _build_repair(self, messages, outcomes):
+        """Build the ephemeral repair exchange + id back-match table. Pure;
+        shared by repair()/arepair(). Returns None if nothing to repair."""
         failed = [o for o in outcomes if not o.ok]
         if not failed:
-            return {}
-        # Ephemeral repair exchange: feed every prior tool_use a tool_result
-        # (failures flagged is_error), then ask the model to re-emit.
+            return None
+        # Feed every prior tool_use a tool_result (failures flagged is_error),
+        # then ask the model to re-emit.
         result_blocks = []
         for o in outcomes:
             blk = {
@@ -571,15 +743,13 @@ class _AnthropicStrategy(_Strategy):
                     f"Re-emit corrected tool call(s) for: {summary}. "
                     f"Emit exactly {len(failed)} tool call(s)."}]},
         ]
-        kw = dict(kwargs)
-        kw.setdefault("max_tokens", 1024)
-        resp = client.messages.create(
-            model=model, messages=repair_messages, tools=tools, **kw
-        )
-        # Back-match re-emitted tool_use blocks to failed ids by name, in order.
         remaining: dict[str, list[str]] = {}
         for o in failed:
             remaining.setdefault(o.name, []).append(o.id)
+        return repair_messages, remaining
+
+    def _parse_corrected(self, resp, remaining):
+        """Back-match re-emitted tool_use blocks to failed ids by name, in order."""
         corrected: dict[str, dict[str, Any]] = {}
         for block in getattr(resp, "content", []) or []:
             if getattr(block, "type", None) != "tool_use":
@@ -596,6 +766,45 @@ class _AnthropicStrategy(_Strategy):
             if isinstance(inp, dict):
                 corrected[remaining[name].pop(0)] = inp
         return corrected
+
+    def repair(self, client, model, messages, tools, outcomes, kwargs):
+        built = self._build_repair(messages, outcomes)
+        if built is None:
+            return {}
+        repair_messages, remaining = built
+        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
+        resp = client.messages.create(model=model, messages=repair_messages, tools=tools, **kw)
+        return self._parse_corrected(resp, remaining)
+
+    async def acreate(self, client, model, messages, tools, kwargs):
+        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
+        return await client.messages.create(model=model, messages=messages, tools=tools, **kw)
+
+    async def ajudge_needed(self, client, model, messages, prompt, kwargs):
+        kw = dict(kwargs); kw.setdefault("max_tokens", 256)
+        resp = await client.messages.create(
+            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kw)
+        txt = "".join(getattr(b, "text", "") for b in (getattr(resp, "content", []) or [])
+                      if getattr(b, "type", None) == "text").upper()
+        return "NEEDED" in txt
+
+    async def aforced_emit(self, client, model, messages, tools, tool_name, kwargs):
+        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
+        resp = await client.messages.create(
+            model=model,
+            messages=list(messages) + [{"role": "user",
+                "content": f"Call the {tool_name} tool now with the appropriate arguments."}],
+            tools=tools, tool_choice={"type": "tool", "name": tool_name}, **kw)
+        return self.parse(resp)
+
+    async def arepair(self, client, model, messages, tools, outcomes, kwargs):
+        built = self._build_repair(messages, outcomes)
+        if built is None:
+            return {}
+        repair_messages, remaining = built
+        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
+        resp = await client.messages.create(model=model, messages=repair_messages, tools=tools, **kw)
+        return self._parse_corrected(resp, remaining)
 
 
 _OPENAI = _OpenAIStrategy()

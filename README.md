@@ -102,6 +102,9 @@ derives schemas from `tools`, and fails open. Deliberately **one turn, not a fra
 no streaming, no multi-turn ownership, you decide when to stop. Need to own execution?
 Drop to `guard().check()` / `.execute()`.
 
+**Async?** Use `await cruxial.arun(...)` with an `AsyncOpenAI` / async client, and
+`await guard().aexecute(...)` for async tool executors — same contract, everything awaited.
+
 ## What it catches
 
 Eight failure categories. Every interception is logged with the failure

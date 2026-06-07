@@ -70,3 +70,4 @@ packages = ["cruxial"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra --tb=short"
+asyncio_mode = "auto"

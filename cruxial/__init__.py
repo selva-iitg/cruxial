@@ -5,7 +5,7 @@ from __future__ import annotations
 __version__ = "0.4.0"
 
 from cruxial.core import Cruxial, GuardConfig, NoopCruxial, guard
-from cruxial.run import RunResult, run
+from cruxial.run import RunResult, arun, run
 from cruxial.lint import (
     LintIssue,
     lint_schema,
@@ -39,6 +39,7 @@ __all__ = [
     "GuardConfig",
     # Managed turn
     "run",
+    "arun",
     "RunResult",
     # Schema linter
     "LintIssue",

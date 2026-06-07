@@ -186,35 +186,94 @@ def auto_repair_batch(
     """
     if not tool_call_outcomes:
         return {}
+    built = _build_batch_repair(messages, tool_call_outcomes)
+    if built is None:
+        return {}
+    repair_messages, remaining_by_name, n_failed = built
 
+    last_exception: Exception | None = None
+    for _attempt in range(max_attempts):
+        try:
+            resp = client.chat.completions.create(
+                model=model, messages=repair_messages, tools=tools,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_exception = exc
+            continue
+        corrected = _parse_batch_corrected(resp, remaining_by_name)
+        if corrected:
+            return corrected
+
+    raise RepairExhausted(
+        f"could not repair {n_failed} tool call(s) after {max_attempts} attempt(s)"
+        + (f". last error: {last_exception}" if last_exception else "")
+    )
+
+
+async def auto_repair_batch_async(
+    client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_call_outcomes: list[dict[str, Any]],
+    max_attempts: int = 1,
+) -> dict[str, dict[str, Any]]:
+    """Async twin of `auto_repair_batch` — awaits an async client (`AsyncOpenAI`,
+    async LiteLLM, …). Identical contract and return shape."""
+    if not tool_call_outcomes:
+        return {}
+    built = _build_batch_repair(messages, tool_call_outcomes)
+    if built is None:
+        return {}
+    repair_messages, remaining_by_name, n_failed = built
+
+    last_exception: Exception | None = None
+    for _attempt in range(max_attempts):
+        try:
+            resp = await client.chat.completions.create(
+                model=model, messages=repair_messages, tools=tools,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_exception = exc
+            continue
+        corrected = _parse_batch_corrected(resp, remaining_by_name)
+        if corrected:
+            return corrected
+
+    raise RepairExhausted(
+        f"could not repair {n_failed} tool call(s) after {max_attempts} attempt(s)"
+        + (f". last error: {last_exception}" if last_exception else "")
+    )
+
+
+def _build_batch_repair(
+    messages: list[dict[str, Any]],
+    tool_call_outcomes: list[dict[str, Any]],
+):
+    """Build the repair conversation + the id back-match table. Pure; shared by
+    the sync and async batch-repair paths. Returns None if nothing to repair."""
     failed = [o for o in tool_call_outcomes if not o.get("ok", True)]
     if not failed:
-        return {}
+        return None
 
-    # Provide tool_result for every prior tool_call — OpenAI requires 1:1
+    # Provide a tool_result for every prior tool_call — OpenAI requires 1:1
     # coverage of the previous assistant turn's tool_calls.
     tool_result_msgs: list[dict[str, Any]] = []
     for o in tool_call_outcomes:
-        tc_id = o["tool_call_id"]
         if o.get("ok", True):
-            payload = {"ok": True, "result": _safe_jsonable(o.get("value"))}
-            content = json.dumps(payload)
+            content = json.dumps({"ok": True, "result": _safe_jsonable(o.get("value"))})
         else:
             content = o.get("repair_prompt") or _fallback_failure_text(o)
-        tool_result_msgs.append({
-            "role": "tool",
-            "tool_call_id": tc_id,
-            "content": content,
-        })
+        tool_result_msgs.append(
+            {"role": "tool", "tool_call_id": o["tool_call_id"], "content": content}
+        )
 
-    # Enumerate the failures so the model knows exactly how many corrected
-    # calls to re-emit.
     failure_summary = "\n".join(
         f"  {i+1}. tool_call_id={o['tool_call_id']!r}, name={o['name']!r}, "
         f"failure={o['failure'].category}: {o['failure'].message}"
         for i, o in enumerate(failed)
     )
-
     user_repair_prompt = (
         f"The following {len(failed)} tool call(s) were rejected by the schema "
         f"validator:\n{failure_summary}\n\n"
@@ -222,53 +281,38 @@ def auto_repair_batch(
         "schema fragments that were violated. Re-emit corrected versions of "
         f"these call(s). Emit exactly {len(failed)} tool call(s)."
     )
-
     repair_messages = list(messages) + tool_result_msgs + [
         {"role": "user", "content": user_repair_prompt}
     ]
 
-    # Back-match the model's new tool_calls to original failed ids by name.
-    # When multiple originals share a name (e.g. 4 deploys), match in
-    # emission order — best the API surface allows.
+    # Back-match new tool_calls to original failed ids by name; when several
+    # originals share a name, match in emission order.
     remaining_by_name: dict[str, list[str]] = {}
     for o in failed:
         remaining_by_name.setdefault(o["name"], []).append(o["tool_call_id"])
 
-    last_exception: Exception | None = None
-    for _attempt in range(max_attempts):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=repair_messages,
-                tools=tools,
-            )
-        except Exception as exc:  # noqa: BLE001
-            last_exception = exc
+    return repair_messages, remaining_by_name, len(failed)
+
+
+def _parse_batch_corrected(
+    resp: Any, remaining_by_name: dict[str, list[str]]
+) -> dict[str, dict[str, Any]]:
+    """Map the model's re-emitted tool_calls back to the original failed ids."""
+    new_tool_calls = getattr(resp.choices[0].message, "tool_calls", None) or []
+    corrected: dict[str, dict[str, Any]] = {}
+    for tc in new_tool_calls:
+        fn = getattr(tc, "function", None)
+        if fn is None:
             continue
-
-        new_tool_calls = getattr(resp.choices[0].message, "tool_calls", None) or []
-        corrected: dict[str, dict[str, Any]] = {}
-        for tc in new_tool_calls:
-            fn = getattr(tc, "function", None)
-            if fn is None:
-                continue
-            name = getattr(fn, "name", None)
-            if not name or name not in remaining_by_name or not remaining_by_name[name]:
-                continue
-            try:
-                args = json.loads(getattr(fn, "arguments", "{}") or "{}")
-            except json.JSONDecodeError:
-                continue
-            original_id = remaining_by_name[name].pop(0)
-            corrected[original_id] = args
-
-        if corrected:
-            return corrected
-
-    raise RepairExhausted(
-        f"could not repair {len(failed)} tool call(s) after {max_attempts} attempt(s)"
-        + (f". last error: {last_exception}" if last_exception else "")
-    )
+        name = getattr(fn, "name", None)
+        if not name or name not in remaining_by_name or not remaining_by_name[name]:
+            continue
+        try:
+            args = json.loads(getattr(fn, "arguments", "{}") or "{}")
+        except json.JSONDecodeError:
+            continue
+        corrected[remaining_by_name[name].pop(0)] = args
+    return corrected
 
 
 def _safe_jsonable(value: Any, max_chars: int = 500) -> Any:

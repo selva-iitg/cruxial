@@ -4,9 +4,10 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 
 ## [0.4.0] — 2026-06-07
 
-Adds a Pydantic adapter so you can define tools as Pydantic v2 models instead of hand-written JSON Schema. Additive and backward-compatible — no API breaks, and Pydantic is never required by the core (it's an optional, lazily-imported extra).
+Two additive, backward-compatible features — a **Pydantic adapter** (define tools as Pydantic v2 models) and **async support** (`aexecute` / `arun`). No API breaks; Pydantic is never required by the core (optional, lazily-imported extra).
 
 ### Added
+- **Async support** — `guard().aexecute()` / `aexecute_repaired()` and the top-level `cruxial.arun()` for async tool executors and async clients (`AsyncOpenAI`, async Anthropic, async LiteLLM). `aexecute()` awaits a coroutine-returning executor (and still accepts plain sync ones); `arun()` mirrors `run()` with every model call and tool execution awaited. **Sync `execute()` now raises a clear error on an async executor** instead of silently returning an un-awaited coroutine (the tool never running) — use `aexecute()`/`arun()` there.
 - **`cruxial.adapters.pydantic`** (optional `cruxial[pydantic]`, Pydantic v2) — define tools as `BaseModel`s and let cruxial pull their JSON Schema:
   - `extract_schemas(models)` — model(s) → `{tool_name: schema}`. Accepts a single model, an iterable, or a `{name: Model}` mapping (e.g. snake_case names to match your executor keys).
   - `guard_models(...)` / `register_models(...)` — build a guard, or extend one, directly from models.

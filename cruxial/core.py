@@ -12,6 +12,7 @@ This is enforced by `_fail_open` everywhere validation/telemetry runs.
 
 from __future__ import annotations
 
+import inspect
 import time
 import warnings
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from typing import Any, Callable, Mapping
 
 from cruxial import __version__
 from cruxial.classifier import unknown_tool
+from cruxial.errors import CruxialError
 from cruxial.repair import build_repair_prompt
 from cruxial.telemetry import (
     MultiSink,
@@ -253,82 +255,108 @@ class Cruxial:
     def execute(self, name: str, args: dict[str, Any]) -> ExecutionResult:
         """Validate `args` against `name`'s schema, then execute.
 
-        Never raises from Cruxial's internals (when fail_open=True). The
-        result object surfaces success/failure typed.
+        Never raises from Cruxial's internals (when fail_open=True) — the result
+        object surfaces success/failure typed. The one exception is a usage
+        error: if your executor is **async** (returns a coroutine), sync
+        execute() can't await it, so it raises with a pointer to `aexecute()`
+        rather than silently dropping the call.
         """
         start_ns = time.perf_counter_ns()
         args = args or {}
 
-        # 1. Unknown tool — pre-validation check.
+        early = self._pre_execute(name, args, start_ns)
+        if early is not None:
+            return early
+
+        # Execute the user's function.
+        try:
+            value = self.executors[name](**args)
+        except BaseException as exc:  # noqa: BLE001 — surface anything the user's fn does
+            return self._record_executor_error(name, args, exc, start_ns)
+
+        if inspect.iscoroutine(value):
+            value.close()  # don't leak an un-awaited coroutine
+            raise CruxialError(
+                f"executor for {name!r} is async — sync execute() can't run it. "
+                f"Use `await cruxial.aexecute({name!r}, args)` or `cruxial.arun(...)`."
+            )
+
+        return self._record_success(name, args, value, start_ns)
+
+    async def aexecute(self, name: str, args: dict[str, Any]) -> ExecutionResult:
+        """Async twin of `execute()`. Awaits a coroutine-returning (async)
+        executor; a plain sync executor works too (its result is used directly).
+        Same validation, telemetry, and fail-open semantics as `execute()`.
+        """
+        start_ns = time.perf_counter_ns()
+        args = args or {}
+
+        early = self._pre_execute(name, args, start_ns)
+        if early is not None:
+            return early
+
+        try:
+            value = self.executors[name](**args)
+            if inspect.iscoroutine(value):
+                value = await value
+        except BaseException as exc:  # noqa: BLE001
+            return self._record_executor_error(name, args, exc, start_ns)
+
+        return self._record_success(name, args, value, start_ns)
+
+    # ── shared execute internals (sync + async) ──────────────────────────────
+
+    def _pre_execute(
+        self, name: str, args: dict[str, Any], start_ns: int
+    ) -> ExecutionResult | None:
+        """Unknown-tool + validation, shared by execute()/aexecute(). Returns a
+        failure result to return early, or None to proceed to the call."""
         if name not in self.schemas:
             failure = unknown_tool(name, list(self.schemas))
             self._record(
-                tool=name,
-                status="intercepted",
-                failure=failure,
-                args=args,
-                latency_ns=start_ns,
-                schema_hash="-",
-                repaired=False,
+                tool=name, status="intercepted", failure=failure, args=args,
+                latency_ns=start_ns, schema_hash="-", repaired=False,
             )
             return ExecutionResult(
                 ok=False, tool=name, failure=failure,
                 latency_ms=perf_ms_since(start_ns),
             )
 
-        schema = self.schemas[name]
-
-        # 2. Validate. Fail-open: if our own validator crashes, pass through.
-        validation = self._fail_open_validate(name, args, schema)
-
+        # Validate. Fail-open: if our own validator crashes, pass through.
+        validation = self._fail_open_validate(name, args, self.schemas[name])
         if validation is not None and not validation.ok:
             failure = validation.failure
             assert failure is not None
             self._record(
-                tool=name,
-                status="intercepted",
-                failure=failure,
-                args=args,
-                latency_ns=start_ns,
-                schema_hash=self._schema_hashes[name],
-                repaired=False,
+                tool=name, status="intercepted", failure=failure, args=args,
+                latency_ns=start_ns, schema_hash=self._schema_hashes[name], repaired=False,
             )
             return ExecutionResult(
                 ok=False, tool=name, failure=failure,
                 latency_ms=perf_ms_since(start_ns),
             )
+        return None
 
-        # 3. Execute the user's function.
-        try:
-            value = self.executors[name](**args)
-        except BaseException as exc:  # noqa: BLE001 — surface anything the user's fn does
-            self._record(
-                tool=name,
-                status="executor_error",
-                failure=None,
-                args=args,
-                latency_ns=start_ns,
-                schema_hash=self._schema_hashes[name],
-                repaired=False,
-            )
-            return ExecutionResult(
-                ok=False, tool=name, error=exc,
-                latency_ms=perf_ms_since(start_ns),
-            )
-
-        # 4. Happy path.
+    def _record_executor_error(
+        self, name: str, args: dict[str, Any], exc: BaseException, start_ns: int
+    ) -> ExecutionResult:
         self._record(
-            tool=name,
-            status="passed",
-            failure=None,
-            args=args,
-            latency_ns=start_ns,
-            schema_hash=self._schema_hashes[name],
-            repaired=False,
+            tool=name, status="executor_error", failure=None, args=args,
+            latency_ns=start_ns, schema_hash=self._schema_hashes[name], repaired=False,
         )
         return ExecutionResult(
-            ok=True, tool=name, value=value,
-            latency_ms=perf_ms_since(start_ns),
+            ok=False, tool=name, error=exc, latency_ms=perf_ms_since(start_ns),
+        )
+
+    def _record_success(
+        self, name: str, args: dict[str, Any], value: Any, start_ns: int
+    ) -> ExecutionResult:
+        self._record(
+            tool=name, status="passed", failure=None, args=args,
+            latency_ns=start_ns, schema_hash=self._schema_hashes[name], repaired=False,
+        )
+        return ExecutionResult(
+            ok=True, tool=name, value=value, latency_ms=perf_ms_since(start_ns),
         )
 
     def check(self, name: str, args: dict[str, Any]) -> ExecutionResult:
@@ -499,6 +527,23 @@ class Cruxial:
             result.repaired_args = repaired_args
         return result
 
+    async def aexecute_repaired(
+        self,
+        name: str,
+        repaired_args: dict[str, Any],
+    ) -> ExecutionResult:
+        """Async twin of `execute_repaired()` — awaits an async executor."""
+        result = await self.aexecute(name, repaired_args)
+        if result.ok:
+            self._record(
+                tool=name, status="corrected", failure=None, args=repaired_args,
+                latency_ns=time.perf_counter_ns(),
+                schema_hash=self._schema_hashes.get(name, "-"), repaired=True,
+            )
+            result.repaired = True
+            result.repaired_args = repaired_args
+        return result
+
     def build_repair_prompt(
         self,
         failure: Failure,
@@ -619,6 +664,12 @@ class NoopCruxial:
         )
 
     def execute_repaired(self, name: str, args: dict[str, Any]) -> ExecutionResult:
+        return self.execute(name, args)
+
+    async def aexecute(self, name: str, args: dict[str, Any]) -> ExecutionResult:
+        return self.execute(name, args)
+
+    async def aexecute_repaired(self, name: str, args: dict[str, Any]) -> ExecutionResult:
         return self.execute(name, args)
 
     def knows(self, name: str) -> bool:
