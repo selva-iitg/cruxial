@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from cruxial.core import Cruxial, GuardConfig, NoopCruxial, guard
 from cruxial.run import RunResult, arun, run
@@ -27,8 +27,14 @@ from cruxial.types import (
     Failure,
     FailureCategory,
     InterceptionRecord,
+    Operation,
+    OpState,
+    Receipt,
     ValidationResult,
+    Verdict,
 )
+from cruxial.actions import ActionRegistry, FLAG, HALT, PASS, action, verify
+from cruxial.receipts import ReceiptRegistry, http_receipt, id_field, receipt
 
 __all__ = [
     "__version__",
@@ -55,6 +61,21 @@ __all__ = [
     "Failure",
     "FailureCategory",
     "InterceptionRecord",
+    # Action layer (v0.5)
+    "action",
+    "verify",
+    "receipt",
+    "PASS",
+    "FLAG",
+    "HALT",
+    "Receipt",
+    "Operation",
+    "OpState",
+    "Verdict",
+    "id_field",
+    "http_receipt",
+    "ReceiptRegistry",
+    "ActionRegistry",
     # Errors
     "CruxialError",
     "SchemaViolation",

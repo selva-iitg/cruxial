@@ -2,6 +2,20 @@
 
 All notable changes to Cruxial are documented here. Format: [Keep a Changelog](https://keepachangelog.com); versioning: [SemVer](https://semver.org).
 
+## [0.5.0] — 2026-06-12
+
+The **action layer** — Cruxial moves from "is the tool call well-formed?" to "**did the action actually happen?**" Mark a side-effecting tool with `@action`, give it a receipt adapter, and every call resolves to a receipt-derived state (`posted` / `failed` / `unknown` / `needs_review`) in an append-only **ledger**. Only a real receipt advances state, so the model's narrated "done" can never promote an unconfirmed action to done. Additive and fail-open — 0.4 behaviour is unchanged until a tool is instrumented.
+
+### Added
+- **`@cruxial.action` / `@cruxial.verify` / `cruxial.receipt`** — mark a tool side-effecting (a receipt is required to confirm it ran), register a per-tool verify hook returning `PASS` / `FLAG` / `HALT`, and register a per-tool receipt adapter. Reusable adapter factories: `id_field("message_id")` ("no id → not done" — the pattern teams hand-roll) and `http_receipt`.
+- **The action ledger** — every resolved operation (intent → policy → call → receipt → state) is appended to a local `operations` table; privacy-safe (args hashed, never stored raw). Built-in structural verifiers: `receipt_required` (HALT — with a guided hint naming the adapter to add) and `zero_latency` (advisory FLAG). New `Receipt` / `Operation` / `OpState` / `Verdict` types; `ExecutionResult` now carries `receipt` / `state` / `op_id` / `operation`.
+- **`cruxial view`** — a local dashboard over the ledger: confirmed vs **silent-failure** (`unknown`) counts, recent operations, and a single-operation `intent → receipt` trace card. `cruxial demo` now shows the action layer (receipt → posted vs no-receipt → unknown).
+- **`RunResult.state(tool)` / `.render()` / `.operations` / `.halted`** — `render()` is receipt-derived and never prints a bare "done"; an unconfirmed action reads as `unknown`. The model's next-turn tool result now carries the receipt status, so it works with the proof, not its own assumption.
+- Async parity throughout (`aexecute` / `arun` / async verify hooks).
+
+### Changed
+- **BREAKING — `run(bypass=...)` default flipped.** A claimed-but-never-called action is now caught **deterministically** (recorded as `unknown`, **no extra model call**) instead of via a model re-prompt — because a confident model just re-affirms the false claim. The old auto-correcting re-prompt is now opt-in: `bypass="recover"` (one neutral re-prompt) or `bypass="strict"` (judge, then forced emit). `RunResult.bypass` now means *detected*, not *re-prompt-confirmed*. `bypass="off"` is unchanged.
+
 ## [0.4.0] — 2026-06-07
 
 Two additive, backward-compatible features — a **Pydantic adapter** (define tools as Pydantic v2 models) and **async support** (`aexecute` / `arun`). No API breaks; Pydantic is never required by the core (optional, lazily-imported extra).
@@ -76,6 +90,7 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.5.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.0

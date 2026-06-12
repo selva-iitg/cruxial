@@ -72,6 +72,46 @@ for tool_call in llm_response.tool_calls:
     use(result.value)
 ```
 
+## The action layer — did it actually happen?
+
+Schema validation catches a *malformed* call. It can't catch the worse failure: your
+agent says **"I sent the email"** and never called the tool — or the call returned with no
+proof it worked. Mark a side-effecting tool with `@action`, tell Cruxial how to read its
+**receipt**, and every call resolves from the receipt — never the model's word for it. No
+receipt ⇒ `unknown`, never a silent "done".
+
+```python
+import cruxial
+
+@cruxial.action                          # side-effecting → a receipt is required
+def send_email(to, subject, body):
+    return mailer.send(to=to, subject=subject, body=body)   # e.g. {"message_id": "..."}
+
+@cruxial.receipt("send_email")           # how to read the proof (or: id_field("message_id"))
+def _(raw):
+    return cruxial.Receipt(ok=bool(raw.get("message_id")), id=raw.get("message_id"), kind="email")
+
+@cruxial.verify("send_email")            # optional domain check → PASS / FLAG / HALT
+def _(args, receipt):
+    return cruxial.HALT("no message-id") if receipt.id is None else cruxial.PASS
+
+result = cruxial.run(client, model=m, messages=msgs, tools=tools, executors=ex)
+result.state("send_email")   # → "posted" | "unknown" | "needs_review" | "failed"
+result.render()              # receipt-derived summary — never a bare "done"
+```
+
+A claimed-but-never-called action is caught **deterministically** — recorded as `unknown`
+with no extra model call (the default). Then see what your agents actually did:
+
+```bash
+cruxial view     # confirmed vs silent-failure (unknown) counts + per-op receipt trace
+```
+
+> **Upgrading from 0.4:** the action layer is additive — existing `guard()`/`run()` code is
+> unchanged until you mark a tool `@action`. One breaking change: `run(bypass="on")` now
+> *detects deterministically* instead of re-prompting the model; pass `bypass="recover"` for
+> the old auto-correcting behaviour. See the [CHANGELOG](CHANGELOG.md).
+
 ## Or: one call does the whole turn
 
 `guard()` gives you full control. If you write the usual raw-SDK loop, `cruxial.run()`
