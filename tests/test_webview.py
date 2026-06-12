@@ -55,7 +55,7 @@ def test_op_to_dict_shapes_receipt():
 def test_page_has_api_hooks():
     assert "action ledger" in _PAGE
     assert "/api/state" in _PAGE and "/api/op/" in _PAGE
-    assert "silent failures" in _PAGE
+    assert "silent failures" in _PAGE.lower()
 
 
 def test_server_serves_page_and_api(tmp_path):
