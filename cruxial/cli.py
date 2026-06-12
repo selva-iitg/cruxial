@@ -53,6 +53,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_view.add_argument("op_id", nargs="?", default=None, help="show the full trace for one operation")
     p_view.add_argument("--db", type=Path, default=None, help="path to telemetry.sqlite (see `stats --db`).")
     p_view.add_argument("--limit", type=int, default=20, help="recent operations to list (default: 20)")
+    p_view.add_argument("--web", action="store_true", help="open a live local web dashboard (127.0.0.1 only)")
+    p_view.add_argument("--port", type=int, default=7878, help="port for --web (default: 7878)")
 
     p_diag = sub.add_parser("diagnostic", help="Print version + environment info for bug reports.")
 
@@ -63,7 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "demo":
         return cmd_demo()
     if args.cmd == "view":
-        return cmd_view(args.db, args.op_id, args.limit)
+        return cmd_view(args.db, args.op_id, args.limit, args.web, args.port)
     if args.cmd == "diagnostic":
         return cmd_diagnostic()
     parser.print_help()
@@ -227,9 +229,12 @@ _STATE_GLYPH = {
 }
 
 
-def cmd_view(db_path: Path | None, op_id: str | None, limit: int) -> int:
+def cmd_view(
+    db_path: Path | None, op_id: str | None, limit: int,
+    web: bool = False, port: int = 7878,
+) -> int:
     """The action ledger — what your agent actually DID (receipt-derived states),
-    or the full intent → receipt trace for one operation."""
+    the full intent → receipt trace for one operation, or a live web dashboard."""
     if db_path is None:
         db_path = default_db_path()
     if not db_path.exists():
@@ -239,6 +244,10 @@ def cmd_view(db_path: Path | None, op_id: str | None, limit: int) -> int:
             "  or try:  cruxial demo   ·   override with --db <path> / CRUXIAL_DB_PATH."
         )
         return 1
+
+    if web:
+        from cruxial.webview import serve
+        return serve(db_path, port)
 
     from cruxial.ledger import Ledger
 
