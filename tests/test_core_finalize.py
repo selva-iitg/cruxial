@@ -172,6 +172,21 @@ async def test_aexecute_async_verify_halts():
 # ─── end-to-end over sqlite (the real ledger + reads) ────────────────────────
 
 
+def test_protection_registry_persisted(tmp_path):
+    ar, rr = ActionRegistry(), ReceiptRegistry()
+    ar.mark_action("send_email")
+    rr.register("send_email", id_field("message_id"))
+    ar.register_verify("send_email", lambda a, r: PASS)
+    sink = SqliteSink(tmp_path / "t.sqlite")
+    build({"send_email": lambda **k: {"message_id": "m1"}, "lookup": lambda **k: {"x": 1}},
+          ar, rr, sink)  # guard() persists the action registry at construction
+    prot = {p["tool"]: p for p in Ledger(sink).protection()}
+    assert prot["send_email"] == {
+        "tool": "send_email", "is_action": True, "has_receipt": True, "verify_count": 1}
+    assert prot["lookup"]["is_action"] is False
+    sink.close()
+
+
 def test_end_to_end_sqlite_ledger(tmp_path):
     ar, rr = ActionRegistry(), ReceiptRegistry()
     ar.mark_action("send_email")

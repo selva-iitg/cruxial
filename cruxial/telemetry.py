@@ -146,6 +146,9 @@ class StdoutSink:
         except Exception:
             pass
 
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        return  # No-op for stdout — only sqlite persists the registry.
+
     def close(self) -> None:
         pass
 
@@ -201,6 +204,14 @@ class SqliteSink:
     CREATE INDEX IF NOT EXISTS idx_op_tool ON operations(tool);
     CREATE INDEX IF NOT EXISTS idx_op_state ON operations(state);
     CREATE INDEX IF NOT EXISTS idx_op_ts ON operations(ts_intent);
+
+    CREATE TABLE IF NOT EXISTS actions (
+        tool TEXT PRIMARY KEY,
+        is_action INTEGER NOT NULL,
+        has_receipt INTEGER NOT NULL,
+        verify_count INTEGER NOT NULL,
+        updated TEXT NOT NULL
+    );
     """
 
     def __init__(self, path: Path | str | None = None):
@@ -289,6 +300,32 @@ class SqliteSink:
         except Exception:
             pass
 
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        """UPSERT per-tool action-layer protection (is_action / has_receipt /
+        verify_count) so `cruxial view` can show what's guarded. Idempotent."""
+        if not rows:
+            return
+        ts = utc_now()
+        try:
+            with self._lock:
+                for tool, info in rows.items():
+                    self._conn.execute(
+                        """
+                        INSERT INTO actions (tool, is_action, has_receipt, verify_count, updated)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(tool) DO UPDATE SET
+                            is_action = excluded.is_action,
+                            has_receipt = excluded.has_receipt,
+                            verify_count = excluded.verify_count,
+                            updated = excluded.updated
+                        """,
+                        (tool, 1 if info["is_action"] else 0, 1 if info["has_receipt"] else 0,
+                         int(info["verify_count"]), ts),
+                    )
+                self._conn.commit()
+        except Exception:
+            pass
+
     def append_operation(self, op: Any) -> None:
         """Append one resolved Operation to the action ledger. Append-only;
         privacy-safe (requested args are hashed, never stored raw). Fail-open."""
@@ -365,6 +402,14 @@ class MultiSink:
             except Exception:
                 pass
 
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        for s in self.sinks:
+            try:
+                if hasattr(s, "register_actions"):
+                    s.register_actions(rows)
+            except Exception:
+                pass
+
     def close(self) -> None:
         for s in self.sinks:
             try:
@@ -380,6 +425,7 @@ class NullSink:
         self.records: list[InterceptionRecord] = []
         self.registered: dict[str, str] = {}
         self.operations: list[Any] = []
+        self.actions: dict[str, dict[str, Any]] = {}
 
     def record(self, r: InterceptionRecord) -> None:
         self.records.append(r)
@@ -393,6 +439,9 @@ class NullSink:
 
     def append_operation(self, op: Any) -> None:
         self.operations.append(op)
+
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        self.actions = dict(rows)
 
     def close(self) -> None:
         pass

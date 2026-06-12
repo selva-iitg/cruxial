@@ -111,6 +111,23 @@ class Ledger:
             return {}
         return {state: n for state, n in rows}
 
+    def protection(self) -> list[dict[str, Any]]:
+        """Per-tool action-layer coverage (what's guarded) — for `cruxial view`.
+        Side-effecting tools first, then read-only."""
+        if not hasattr(self._sink, "query"):
+            return []
+        try:
+            rows = self._sink.query(
+                "SELECT tool, is_action, has_receipt, verify_count FROM actions "
+                "ORDER BY is_action DESC, tool"
+            )
+        except Exception:
+            return []
+        return [
+            {"tool": t, "is_action": bool(a), "has_receipt": bool(r), "verify_count": vc}
+            for (t, a, r, vc) in rows
+        ]
+
     def _read(self, sql: str, params: tuple) -> list[Operation]:
         if not hasattr(self._sink, "query"):
             return []  # non-sqlite sink — nothing to read back

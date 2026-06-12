@@ -129,6 +129,9 @@ class ActionRegistry:
     def has_verify(self, tool: str) -> bool:
         return bool(self._hooks.get(tool))
 
+    def verify_count(self, tool: str) -> int:
+        return len(self._hooks.get(tool, []))
+
     def clear(self) -> None:
         self._actions.clear()
         self._hooks.clear()

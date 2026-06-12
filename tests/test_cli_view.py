@@ -48,6 +48,7 @@ def test_view_dashboard(tmp_path, capsys):
     assert "silent failures" in out
     assert "send_email" in out and "charge" in out
     assert "posted" in out and "unknown" in out
+    assert "protection" in out  # the per-tool coverage section
 
 
 def test_view_single_op_trace(tmp_path, capsys):

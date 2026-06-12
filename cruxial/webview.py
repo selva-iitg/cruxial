@@ -42,6 +42,7 @@ def _state_payload(led: Ledger, db_path: Path) -> dict:
             "failed": counts.get("failed", 0),
         },
         "operations": [_op_to_dict(o) for o in led.recent(200)],
+        "protection": led.protection(),
     }
 
 
@@ -162,6 +163,11 @@ td.tool{font-weight:550;letter-spacing:-.005em}
 .badge.g{color:#74e3ad;background:var(--green-t);border-color:var(--green-b)} .badge.g i{background:var(--green)}
 .badge.r{color:#ff8aa1;background:var(--red-t);border-color:var(--red-b)} .badge.r i{background:var(--red)}
 .badge.a{color:#f6c869;background:var(--amber-t);border-color:var(--amber-b)} .badge.a i{background:var(--amber)}
+.tag{display:inline-block;font-size:11.5px;font-weight:560;padding:2px 9px;border-radius:6px;border:1px solid transparent}
+.tag.act{color:#74e3ad;background:var(--green-t);border-color:var(--green-b)}
+.tag.ro{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
+.rcpt{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:540}
+.rcpt.ok{color:#74e3ad} .rcpt.warn{color:#f6c869}
 .empty{padding:54px;text-align:center;color:var(--muted)}
 .empty code{font-family:var(--mono);color:var(--text);background:var(--surface-2);padding:2px 7px;border-radius:6px}
 .foot{margin-top:18px;font-size:11.5px;color:var(--faint);font-family:var(--mono)}
@@ -199,6 +205,13 @@ td.tool{font-weight:550;letter-spacing:-.005em}
   <div class="card rv"><div class="n" id="c-review">—</div><div class="l">Needs review</div></div>
   <div class="card"><div class="n" id="c-total">—</div><div class="l">Operations</div></div>
  </div>
+ <div id="prot-section">
+  <div class="toolbar" style="margin-top:2px"><h2>Protection</h2><span class="sub" id="psub"></span></div>
+  <div class="panel-tbl" style="margin-bottom:28px">
+   <table><thead><tr><th>Tool</th><th>Type</th><th>Receipt</th><th>Checks</th></tr></thead>
+   <tbody id="prot"></tbody></table>
+  </div>
+ </div>
  <div class="toolbar"><h2>Operations</h2><span class="sub" id="sub"></span></div>
  <div class="panel-tbl">
   <table><thead><tr><th>Tool</th><th>State</th><th>Receipt</th><th>Actor</th><th>When</th></tr></thead>
@@ -234,6 +247,21 @@ async function refresh(){try{
   +'<td class="mono">'+(o.receipt&&o.receipt.id?esc(o.receipt.id):'<span class="dash">—</span>')+'</td>'
   +'<td class="mono muted">'+esc(o.actor||'—')+'</td>'
   +'<td class="mono muted">'+ago(o.ts_intent)+'</td></tr>').join('');}
+ const prot=document.getElementById('prot');
+ const hasProt=d.protection&&d.protection.length;
+ document.getElementById('prot-section').style.display=hasProt?'':'none';
+ if(hasProt){
+  document.getElementById('psub').textContent=d.protection.length+' tools';
+  prot.innerHTML=d.protection.map(p=>{
+   if(!p.is_action)return '<tr><td class="tool">'+esc(p.tool)+'</td>'
+     +'<td><span class="tag ro">read-only</span></td><td class="muted">—</td><td class="muted">—</td></tr>';
+   const rc=p.has_receipt?'<span class="rcpt ok">✓ adapter</span>'
+     :'<span class="rcpt warn">⚠ no adapter</span>';
+   const chk=p.verify_count===0?'<span class="muted">none</span>'
+     :p.verify_count+' check'+(p.verify_count===1?'':'s');
+   return '<tr><td class="tool">'+esc(p.tool)+'</td><td><span class="tag act">action</span></td><td>'+rc
+     +'</td><td class="mono muted">'+chk+'</td></tr>';}).join('');
+ }else{prot.innerHTML='';document.getElementById('psub').textContent='';}
  document.getElementById('foot').textContent='db · '+d.db;
  document.getElementById('live').className='live';
 }catch(e){document.getElementById('live').className='live off';}}

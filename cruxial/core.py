@@ -276,6 +276,20 @@ class Cruxial:
                 )
         except Exception:
             pass
+        # Persist the action-layer registry (what's protected) so `cruxial view`
+        # can show which tools are @action / have a receipt adapter / have hooks.
+        try:
+            if hasattr(sink, "register_actions"):
+                sink.register_actions({
+                    name: {
+                        "is_action": self._actions.is_action(name),
+                        "has_receipt": self._receipts.has(name),
+                        "verify_count": self._actions.verify_count(name),
+                    }
+                    for name in self.schemas
+                })
+        except Exception:
+            pass
 
     # ─── public API ─────────────────────────────────────────────────
 

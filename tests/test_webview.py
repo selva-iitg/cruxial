@@ -42,6 +42,10 @@ def test_state_payload(tmp_path):
     assert p["counts"]["posted"] == 1 and p["counts"]["unknown"] == 1
     tools = {o["tool"] for o in p["operations"]}
     assert tools == {"send_email", "charge"}
+    # protection registry persisted at guard() construction
+    prot = {x["tool"]: x for x in p["protection"]}
+    assert prot["send_email"]["is_action"] and prot["send_email"]["has_receipt"]
+    assert prot["charge"]["is_action"] and not prot["charge"]["has_receipt"]
 
 
 def test_op_to_dict_shapes_receipt():
@@ -56,6 +60,7 @@ def test_page_has_api_hooks():
     assert "action ledger" in _PAGE
     assert "/api/state" in _PAGE and "/api/op/" in _PAGE
     assert "silent failures" in _PAGE.lower()
+    assert "Protection" in _PAGE
 
 
 def test_server_serves_page_and_api(tmp_path):

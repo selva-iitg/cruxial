@@ -309,6 +309,17 @@ def cmd_view(
     if failed:
         print(f"  failed                {failed:>6,}")
 
+    prot = led.protection()
+    if prot:
+        print(bold("\n  protection"))
+        for p in prot:
+            if not p["is_action"]:
+                print(f"    {p['tool']:<22} {dim('read-only')}")
+            else:
+                rc = green("receipt") if p["has_receipt"] else yellow("no adapter")
+                n = p["verify_count"]
+                print(f"    {p['tool']:<22} action · {rc} · {n} check" + ("" if n == 1 else "s"))
+
     print(bold("\n  recent operations"))
     print(dim(f"    {'op_id':<16} {'tool':<18} {'state':<15} {'receipt':<14} when"))
     for op in led.recent(limit):
