@@ -34,6 +34,17 @@ from cruxial.core import Cruxial, GuardConfig, guard as _guard
 from cruxial.errors import ProviderUnsupported
 
 
+_STATE_LABEL = {
+    "posted": "done ✓", "sent": "sent ✓", "queued": "queued",
+    "failed": "failed ✗", "needs_review": "needs review ⚠",
+    "unknown": "unknown — not confirmed ✗", "pending": "pending",
+}
+
+
+def _render_state(state: str | None) -> str:
+    return _STATE_LABEL.get(state, state or "unknown")
+
+
 @dataclass
 class RunResult:
     """The outcome of one managed turn.
@@ -43,17 +54,19 @@ class RunResult:
                     tool results, in the provider's format). Pass it straight
                     back into the next ``run()`` call.
         text:       The assistant's natural-language text this turn, if any.
-                    Usually None on a turn where the model only called tools;
-                    populated on the final wrap-up turn.
         tool_calls: One entry per tool call this turn:
-                    {name, args, ok, value, failure, repaired}.
-        finished:   True when the model returned no tool calls — your cue to
-                    stop the outer loop.
-        bypass:     A BypassSuspicion if the model claimed an action without
-                    calling the tool AND, on a neutral re-prompt, confirmed it
-                    by re-emitting the call (which then executed). None
-                    otherwise. This is the "your agent said it sent the email,
-                    it didn't" catch.
+                    {name, args, ok, value, failure, repaired, state, op_id}.
+        finished:   True when the model returned no tool calls (and no recovery
+                    re-emitted one) — your cue to stop the outer loop.
+        bypass:     A BypassSuspicion when the model claimed an action in prose
+                    but emitted no matching call this turn — DETECTED
+                    deterministically (the receipt's absence is the oracle, not
+                    a model re-prompt). The action is recorded as `unknown`. This
+                    is the "your agent said it sent the email, it didn't" catch.
+        operations: The ledger Operations resolved this turn (absence + each
+                    call-fired action), carrying receipt-derived `state`.
+        halted:     Operations whose verify hook returned HALT (state
+                    `needs_review`) — surface to the caller; do not blind-retry.
         stats:      {passed, intercepted, repaired, bypass} counts for this turn.
     """
 
@@ -62,7 +75,25 @@ class RunResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finished: bool = False
     bypass: BypassSuspicion | None = None
+    operations: list[Any] = field(default_factory=list)
+    halted: list[Any] = field(default_factory=list)
     stats: dict[str, int] = field(default_factory=dict)
+
+    def state(self, tool: str) -> str | None:
+        """Latest receipt-derived state for `tool` this turn (or None)."""
+        for op in reversed(self.operations):
+            if getattr(op, "tool", None) == tool:
+                return getattr(op, "state", None)
+        return None
+
+    def render(self) -> str:
+        """A user-facing summary derived from RECEIPTS, never the model's prose.
+        Never reports a bare "done" — an unconfirmed action reads as "unknown"."""
+        if not self.operations:
+            return self.text or ""
+        return " · ".join(
+            f"{op.tool}: {_render_state(getattr(op, 'state', None))}" for op in self.operations
+        )
 
 
 def run(
@@ -112,6 +143,7 @@ def run(
     #    re-prompt. If it re-emits the call → real bypass, correct it. If it
     #    declines → not a bypass, return the reply unchanged (check invisible).
     bypass_finding: BypassSuspicion | None = None
+    absence_ops: list[Any] = []
     if not calls:
         suspicion = None
         if bypass != "off":
@@ -125,24 +157,31 @@ def run(
                 descriptions=descs,
             )
         if suspicion is not None:
-            corrected = _attempt_correction(
-                strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
-            if corrected is not None:
-                # Confirmed bypass — adopt the corrected turn, drop the false
-                # prose + the re-prompt so history stays clean.
-                n_assistant, n_calls, n_text = corrected
-                bypass_finding = suspicion
-                assistant_msg, calls, text = n_assistant, n_calls, n_text
-                new_messages = list(messages) + [assistant_msg]
-                if hasattr(cx, "record_bypass"):
-                    cx.record_bypass(suspicion.tool)
-            # else: model declined → genuine final reply; leave as-is.
+            # DETERMINISTIC: a claimed completion with no matching call → unknown.
+            # The receipt's absence is the oracle — NOT a model re-prompt (a
+            # confident model just re-affirms the false claim).
+            bypass_finding = suspicion
+            if hasattr(cx, "record_absence"):
+                op = cx.record_absence(suspicion.tool)
+                if op is not None:
+                    absence_ops.append(op)
+            # OPTIONAL recovery (opt-in), demoted from detector to remediation:
+            #   "recover" → one neutral re-prompt; "strict" → judge then forced emit.
+            if bypass in ("recover", "strict"):
+                corrected = _attempt_correction(
+                    strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
+                if corrected is not None:
+                    n_assistant, n_calls, n_text = corrected
+                    assistant_msg, calls, text = n_assistant, n_calls, n_text
+                    new_messages = list(messages) + [assistant_msg]
+                    # calls now non-empty → falls through to the execute path below
 
     if not calls:
         return RunResult(
             messages=new_messages, text=text, tool_calls=[], finished=True,
-            bypass=None,
-            stats={"passed": 0, "intercepted": 0, "repaired": 0, "bypass": 0},
+            bypass=bypass_finding, operations=absence_ops, halted=[],
+            stats={"passed": 0, "intercepted": 0, "repaired": 0,
+                   "bypass": 1 if bypass_finding else 0},
         )
 
     # 4. Validate + execute each call.
@@ -153,6 +192,7 @@ def run(
             id=c["id"], name=c["name"], args=c["args"],
             ok=res.ok, value=res.value if res.ok else None,
             failure=res.failure if not res.ok else None,
+            state=res.state, receipt=res.receipt, op=res.operation,
             repair_prompt=(
                 cx.build_repair_prompt(res.failure, c["args"])
                 if (not res.ok and res.failure) else None
@@ -173,6 +213,7 @@ def run(
             retry = cx.execute_repaired(o.name, new_args)
             if retry.ok:
                 o.ok, o.value, o.repaired, o.failure, o.args = True, retry.value, True, None, new_args
+                o.state, o.receipt, o.op = retry.state, retry.receipt, retry.operation
                 # Keep history coherent: the persisted assistant turn should
                 # show the args that ACTUALLY ran, not the rejected ones.
                 strat.apply_correction(assistant_msg, o.id, new_args)
@@ -182,6 +223,8 @@ def run(
     # 6. Append tool results (provider format), carrying the final outcomes.
     new_messages += strat.tool_result_msgs(outcomes)
 
+    operations = list(absence_ops) + [o.op for o in outcomes if o.op is not None]
+    halted = [op for op in operations if getattr(op, "state", None) == "needs_review"]
     stats = {
         "passed": sum(1 for o in outcomes if o.ok and not o.repaired),
         "intercepted": sum(1 for o in outcomes if o.repaired or not o.ok),
@@ -194,6 +237,8 @@ def run(
         tool_calls=[o.public() for o in outcomes],
         finished=False,
         bypass=bypass_finding,
+        operations=operations,
+        halted=halted,
         stats=stats,
     )
 
@@ -238,6 +283,7 @@ async def arun(
     new_messages.append(assistant_msg)
 
     bypass_finding: BypassSuspicion | None = None
+    absence_ops: list[Any] = []
     if not calls:
         suspicion = None
         if bypass != "off":
@@ -248,21 +294,26 @@ async def arun(
                 side_effecting=side_effecting, descriptions=descs,
             )
         if suspicion is not None:
-            corrected = await _attempt_correction_async(
-                strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
-            if corrected is not None:
-                n_assistant, n_calls, n_text = corrected
-                bypass_finding = suspicion
-                assistant_msg, calls, text = n_assistant, n_calls, n_text
-                new_messages = list(messages) + [assistant_msg]
-                if hasattr(cx, "record_bypass"):
-                    cx.record_bypass(suspicion.tool)
+            # DETERMINISTIC absence catch (receipt-absence oracle, not a re-prompt).
+            bypass_finding = suspicion
+            if hasattr(cx, "record_absence"):
+                op = cx.record_absence(suspicion.tool)
+                if op is not None:
+                    absence_ops.append(op)
+            if bypass in ("recover", "strict"):  # opt-in remediation
+                corrected = await _attempt_correction_async(
+                    strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
+                if corrected is not None:
+                    n_assistant, n_calls, n_text = corrected
+                    assistant_msg, calls, text = n_assistant, n_calls, n_text
+                    new_messages = list(messages) + [assistant_msg]
 
     if not calls:
         return RunResult(
             messages=new_messages, text=text, tool_calls=[], finished=True,
-            bypass=None,
-            stats={"passed": 0, "intercepted": 0, "repaired": 0, "bypass": 0},
+            bypass=bypass_finding, operations=absence_ops, halted=[],
+            stats={"passed": 0, "intercepted": 0, "repaired": 0,
+                   "bypass": 1 if bypass_finding else 0},
         )
 
     outcomes: list[_Outcome] = []
@@ -272,6 +323,7 @@ async def arun(
             id=c["id"], name=c["name"], args=c["args"],
             ok=res.ok, value=res.value if res.ok else None,
             failure=res.failure if not res.ok else None,
+            state=res.state, receipt=res.receipt, op=res.operation,
             repair_prompt=(
                 cx.build_repair_prompt(res.failure, c["args"])
                 if (not res.ok and res.failure) else None
@@ -291,12 +343,15 @@ async def arun(
             retry = await cx.aexecute_repaired(o.name, new_args)
             if retry.ok:
                 o.ok, o.value, o.repaired, o.failure, o.args = True, retry.value, True, None, new_args
+                o.state, o.receipt, o.op = retry.state, retry.receipt, retry.operation
                 strat.apply_correction(assistant_msg, o.id, new_args)
             else:
                 o.failure = retry.failure
 
     new_messages += strat.tool_result_msgs(outcomes)
 
+    operations = list(absence_ops) + [o.op for o in outcomes if o.op is not None]
+    halted = [op for op in operations if getattr(op, "state", None) == "needs_review"]
     stats = {
         "passed": sum(1 for o in outcomes if o.ok and not o.repaired),
         "intercepted": sum(1 for o in outcomes if o.repaired or not o.ok),
@@ -306,7 +361,7 @@ async def arun(
     return RunResult(
         messages=new_messages, text=text,
         tool_calls=[o.public() for o in outcomes], finished=False,
-        bypass=bypass_finding, stats=stats,
+        bypass=bypass_finding, operations=operations, halted=halted, stats=stats,
     )
 
 
@@ -454,16 +509,34 @@ class _Outcome:
     failure: Any = None
     repair_prompt: str | None = None
     repaired: bool = False
+    # v0.5 action layer (None for an uninstrumented tool).
+    state: Any = None
+    receipt: Any = None
+    op: Any = None
 
     def public(self) -> dict[str, Any]:
         return {
             "name": self.name, "args": self.args, "ok": self.ok,
             "value": self.value, "failure": self.failure, "repaired": self.repaired,
+            "state": self.state, "op_id": getattr(self.op, "op_id", None),
         }
 
     def result_content(self) -> str:
-        if self.ok:
-            return _safe_json({"ok": True, "result": self.value})
+        # The model's next-turn tool result is rendered from the RECEIPT, so it
+        # works with "posted"/"unknown" + the proof, not its own assumption.
+        confirmed = self.state in ("posted", "sent", "queued")
+        if self.ok and (self.state is None or confirmed):
+            payload: dict[str, Any] = {"ok": True, "result": self.value}
+            if self.state is not None:
+                payload["status"] = self.state
+            if self.receipt is not None:
+                payload["receipt"] = {"ok": self.receipt.ok, "id": self.receipt.id}
+            return _safe_json(payload)
+        if self.state in ("unknown", "needs_review", "failed"):
+            return _safe_json({
+                "ok": False, "status": self.state, "note": getattr(self.op, "note", None),
+                "receipt": ({"ok": self.receipt.ok, "id": self.receipt.id} if self.receipt else None),
+            })
         cat = getattr(self.failure, "category", "error")
         msg = getattr(self.failure, "message", "tool call rejected")
         return _safe_json({"ok": False, "error": f"{cat}: {msg}"})

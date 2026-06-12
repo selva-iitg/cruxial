@@ -162,7 +162,7 @@ async def test_arun_bypass_correction_async():
     confirm = _tc_resp("send_email", GOOD)                   # re-prompt → emits the call
     client = FakeAsyncOpenAI([claim, confirm])
     res = await arun(client, model="gpt-4o", messages=[{"role": "user", "content": "send the email"}],
-                     tools=TOOLS, executors={"send_email": send_email}, bypass="on", config=_NULL)
+                     tools=TOOLS, executors={"send_email": send_email}, bypass="recover", config=_NULL)
     assert res.bypass is not None and res.bypass.tool == "send_email"
     assert res.tool_calls and res.tool_calls[0]["ok"]
 

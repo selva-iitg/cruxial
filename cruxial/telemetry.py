@@ -135,6 +135,17 @@ class StdoutSink:
     ) -> None:
         return  # No-op for stdout — only sqlite persists a registry.
 
+    def append_operation(self, op: Any) -> None:
+        try:
+            line = json.dumps(
+                {"op": op.op_id, "tool": op.tool, "state": op.state,
+                 "receipt_id": getattr(op.receipt, "id", None)},
+                default=str,
+            )
+            print(line, file=self.stream, flush=True)
+        except Exception:
+            pass
+
     def close(self) -> None:
         pass
 
@@ -169,6 +180,27 @@ class SqliteSink:
         first_registered TEXT NOT NULL,
         last_registered TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS operations (
+        op_id TEXT PRIMARY KEY,
+        ts_intent TEXT NOT NULL,
+        ts_resolved TEXT,
+        actor TEXT,
+        tool TEXT NOT NULL,
+        target TEXT,
+        requested_hash TEXT,
+        policy_decision TEXT,
+        policy_by TEXT,
+        state TEXT NOT NULL,
+        receipt_ok INTEGER,
+        receipt_id TEXT,
+        receipt_kind TEXT,
+        note TEXT,
+        cruxial_version TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_op_tool ON operations(tool);
+    CREATE INDEX IF NOT EXISTS idx_op_state ON operations(state);
+    CREATE INDEX IF NOT EXISTS idx_op_ts ON operations(ts_intent);
     """
 
     def __init__(self, path: Path | str | None = None):
@@ -257,6 +289,37 @@ class SqliteSink:
         except Exception:
             pass
 
+    def append_operation(self, op: Any) -> None:
+        """Append one resolved Operation to the action ledger. Append-only;
+        privacy-safe (requested args are hashed, never stored raw). Fail-open."""
+        try:
+            from cruxial import __version__
+
+            r = op.receipt
+            policy = op.policy or {}
+            with self._lock:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO operations
+                      (op_id, ts_intent, ts_resolved, actor, tool, target,
+                       requested_hash, policy_decision, policy_by, state,
+                       receipt_ok, receipt_id, receipt_kind, note, cruxial_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        op.op_id, op.ts_intent, op.ts_resolved, op.actor, op.tool, op.target,
+                        hash_args(op.requested) if op.requested else None,
+                        policy.get("decision"), policy.get("by"), op.state,
+                        (1 if r.ok else 0) if r is not None else None,
+                        r.id if r is not None else None,
+                        r.kind if r is not None else None,
+                        op.note, __version__,
+                    ),
+                )
+                self._conn.commit()
+        except Exception:
+            pass
+
     def query(self, sql: str, params: tuple = ()) -> list[tuple]:
         with self._lock:
             cur = self._conn.execute(sql, params)
@@ -294,6 +357,14 @@ class MultiSink:
             except Exception:
                 pass
 
+    def append_operation(self, op: Any) -> None:
+        for s in self.sinks:
+            try:
+                if hasattr(s, "append_operation"):
+                    s.append_operation(op)
+            except Exception:
+                pass
+
     def close(self) -> None:
         for s in self.sinks:
             try:
@@ -308,6 +379,7 @@ class NullSink:
     def __init__(self):
         self.records: list[InterceptionRecord] = []
         self.registered: dict[str, str] = {}
+        self.operations: list[Any] = []
 
     def record(self, r: InterceptionRecord) -> None:
         self.records.append(r)
@@ -318,6 +390,9 @@ class NullSink:
         schema_origin: str = "model_visible",
     ) -> None:
         self.registered.update(tools)
+
+    def append_operation(self, op: Any) -> None:
+        self.operations.append(op)
 
     def close(self) -> None:
         pass
