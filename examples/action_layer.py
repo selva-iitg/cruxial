@@ -70,7 +70,7 @@ def _(raw):
     return Receipt(ok=True, id=raw["refund_id"], kind="refund")
 
 
-@verify("issue_refund")                    # a domain rule → PASS / FLAG / HALT
+@verify("issue_refund", label="refund ≤ $1000")   # a domain rule → PASS / FLAG / HALT
 def _(args, rcpt):
     return HALT("refund over $1000 policy limit") if args["amount"] > 1000 else PASS
 

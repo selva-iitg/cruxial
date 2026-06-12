@@ -13,6 +13,7 @@ Operations from the sqlite rows.
 from __future__ import annotations
 
 import itertools
+import json
 import time
 from typing import Any
 
@@ -118,15 +119,22 @@ class Ledger:
             return []
         try:
             rows = self._sink.query(
-                "SELECT tool, is_action, has_receipt, verify_count FROM actions "
+                "SELECT tool, is_action, has_receipt, verify_count, verify_labels FROM actions "
                 "ORDER BY is_action DESC, tool"
             )
         except Exception:
             return []
-        return [
-            {"tool": t, "is_action": bool(a), "has_receipt": bool(r), "verify_count": vc}
-            for (t, a, r, vc) in rows
-        ]
+        out = []
+        for (t, a, r, vc, vl) in rows:
+            try:
+                labels = json.loads(vl) if vl else []
+            except Exception:
+                labels = []
+            out.append({
+                "tool": t, "is_action": bool(a), "has_receipt": bool(r),
+                "verify_count": vc, "verify_labels": labels,
+            })
+        return out
 
     def _read(self, sql: str, params: tuple) -> list[Operation]:
         if not hasattr(self._sink, "query"):

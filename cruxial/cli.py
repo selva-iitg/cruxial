@@ -318,7 +318,14 @@ def cmd_view(
             else:
                 rc = green("receipt") if p["has_receipt"] else yellow("no adapter")
                 n = p["verify_count"]
-                print(f"    {p['tool']:<22} action · {rc} · {n} check" + ("" if n == 1 else "s"))
+                labels = p.get("verify_labels") or []
+                if labels:
+                    checks = ", ".join(labels)
+                elif n:
+                    checks = f"{n} check" + ("" if n == 1 else "s")
+                else:
+                    checks = dim("none")
+                print(f"    {p['tool']:<22} action · {rc} · {checks}")
 
     print(bold("\n  recent operations"))
     print(dim(f"    {'op_id':<16} {'tool':<18} {'state':<15} {'receipt':<14} when"))

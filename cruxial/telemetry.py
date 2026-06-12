@@ -210,6 +210,7 @@ class SqliteSink:
         is_action INTEGER NOT NULL,
         has_receipt INTEGER NOT NULL,
         verify_count INTEGER NOT NULL,
+        verify_labels TEXT,
         updated TEXT NOT NULL
     );
     """
@@ -236,6 +237,9 @@ class SqliteSink:
                     "ALTER TABLE interceptions ADD COLUMN "
                     "schema_origin TEXT DEFAULT 'model_visible'"
                 )
+            acols = {row[1] for row in self._conn.execute("PRAGMA table_info(actions)").fetchall()}
+            if acols and "verify_labels" not in acols:
+                self._conn.execute("ALTER TABLE actions ADD COLUMN verify_labels TEXT")
         except Exception:
             pass  # Fail-open: migration failure must not break boot.
 
@@ -311,16 +315,18 @@ class SqliteSink:
                 for tool, info in rows.items():
                     self._conn.execute(
                         """
-                        INSERT INTO actions (tool, is_action, has_receipt, verify_count, updated)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO actions
+                          (tool, is_action, has_receipt, verify_count, verify_labels, updated)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         ON CONFLICT(tool) DO UPDATE SET
                             is_action = excluded.is_action,
                             has_receipt = excluded.has_receipt,
                             verify_count = excluded.verify_count,
+                            verify_labels = excluded.verify_labels,
                             updated = excluded.updated
                         """,
                         (tool, 1 if info["is_action"] else 0, 1 if info["has_receipt"] else 0,
-                         int(info["verify_count"]), ts),
+                         int(info["verify_count"]), json.dumps(info.get("verify_labels") or []), ts),
                     )
                 self._conn.commit()
         except Exception:

@@ -176,13 +176,14 @@ def test_protection_registry_persisted(tmp_path):
     ar, rr = ActionRegistry(), ReceiptRegistry()
     ar.mark_action("send_email")
     rr.register("send_email", id_field("message_id"))
-    ar.register_verify("send_email", lambda a, r: PASS)
+    ar.register_verify("send_email", lambda a, r: PASS, label="non-empty body")
     sink = SqliteSink(tmp_path / "t.sqlite")
     build({"send_email": lambda **k: {"message_id": "m1"}, "lookup": lambda **k: {"x": 1}},
           ar, rr, sink)  # guard() persists the action registry at construction
     prot = {p["tool"]: p for p in Ledger(sink).protection()}
     assert prot["send_email"] == {
-        "tool": "send_email", "is_action": True, "has_receipt": True, "verify_count": 1}
+        "tool": "send_email", "is_action": True, "has_receipt": True,
+        "verify_count": 1, "verify_labels": ["non-empty body"]}
     assert prot["lookup"]["is_action"] is False
     sink.close()
 

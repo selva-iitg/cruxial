@@ -168,6 +168,8 @@ td.tool{font-weight:550;letter-spacing:-.005em}
 .tag.ro{color:var(--muted);background:var(--surface-2);border-color:var(--border)}
 .rcpt{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:540}
 .rcpt.ok{color:#74e3ad} .rcpt.warn{color:#f6c869}
+.chk{display:inline-block;font-size:11.5px;color:var(--text);background:var(--surface-2);
+ border:1px solid var(--border);padding:1px 8px;border-radius:6px;margin:1px 4px 1px 0}
 .empty{padding:54px;text-align:center;color:var(--muted)}
 .empty code{font-family:var(--mono);color:var(--text);background:var(--surface-2);padding:2px 7px;border-radius:6px}
 .foot{margin-top:18px;font-size:11.5px;color:var(--faint);font-family:var(--mono)}
@@ -257,10 +259,14 @@ async function refresh(){try{
      +'<td><span class="tag ro">read-only</span></td><td class="muted">—</td><td class="muted">—</td></tr>';
    const rc=p.has_receipt?'<span class="rcpt ok">✓ adapter</span>'
      :'<span class="rcpt warn">⚠ no adapter</span>';
-   const chk=p.verify_count===0?'<span class="muted">none</span>'
-     :p.verify_count+' check'+(p.verify_count===1?'':'s');
+   let chk;
+   if(p.verify_labels&&p.verify_labels.length)
+     chk=p.verify_labels.map(l=>'<span class="chk">'+esc(l)+'</span>').join('');
+   else if(p.verify_count>0)
+     chk='<span class="mono muted">'+p.verify_count+' check'+(p.verify_count===1?'':'s')+'</span>';
+   else chk='<span class="muted">none</span>';
    return '<tr><td class="tool">'+esc(p.tool)+'</td><td><span class="tag act">action</span></td><td>'+rc
-     +'</td><td class="mono muted">'+chk+'</td></tr>';}).join('');
+     +'</td><td>'+chk+'</td></tr>';}).join('');
  }else{prot.innerHTML='';document.getElementById('psub').textContent='';}
  document.getElementById('foot').textContent='db · '+d.db;
  document.getElementById('live').className='live';

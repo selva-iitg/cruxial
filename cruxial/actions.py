@@ -108,14 +108,26 @@ def _no_receipt_hint(tool: str) -> str:
 # ─── registry ────────────────────────────────────────────────────────────────
 
 
+def _hook_label(hook: Any, label: str | None) -> str | None:
+    """A display label for a verify hook: the explicit `label`, else the
+    function's name (unless anonymous like `_` / `<lambda>`), else None."""
+    if label:
+        return label
+    name = getattr(hook, "__name__", None)
+    if name and name not in ("_", "<lambda>"):
+        return name
+    return None
+
+
 class ActionRegistry:
     """Tracks which tools are side-effecting (@action) and their verify hooks."""
 
-    __slots__ = ("_actions", "_hooks")
+    __slots__ = ("_actions", "_hooks", "_labels")
 
     def __init__(self) -> None:
         self._actions: set[str] = set()
         self._hooks: dict[str, list[VerifyHook]] = {}
+        self._labels: dict[str, list[str]] = {}
 
     def mark_action(self, tool: str) -> None:
         self._actions.add(tool)
@@ -123,8 +135,11 @@ class ActionRegistry:
     def is_action(self, tool: str) -> bool:
         return tool in self._actions
 
-    def register_verify(self, tool: str, hook: VerifyHook) -> None:
+    def register_verify(self, tool: str, hook: VerifyHook, label: str | None = None) -> None:
         self._hooks.setdefault(tool, []).append(hook)
+        resolved = _hook_label(hook, label)
+        if resolved:
+            self._labels.setdefault(tool, []).append(resolved)
 
     def has_verify(self, tool: str) -> bool:
         return bool(self._hooks.get(tool))
@@ -132,9 +147,16 @@ class ActionRegistry:
     def verify_count(self, tool: str) -> int:
         return len(self._hooks.get(tool, []))
 
+    def verify_labels(self, tool: str) -> list[str]:
+        """Display labels for this tool's verify rules — the explicit `label` or
+        the hook's function name. Anonymous, unlabeled hooks are omitted (the
+        count still reflects them)."""
+        return list(self._labels.get(tool, []))
+
     def clear(self) -> None:
         self._actions.clear()
         self._hooks.clear()
+        self._labels.clear()
 
     # -- built-in structural verifiers (no domain knowledge) --
 
@@ -253,7 +275,7 @@ def action(
 
 
 def verify(
-    tool: str, *, registry: ActionRegistry | None = None
+    tool: str, *, label: str | None = None, registry: ActionRegistry | None = None
 ) -> Callable[[VerifyHook], VerifyHook]:
     """Register a per-tool verify hook (args, receipt) -> verdict.
 
@@ -261,11 +283,15 @@ def verify(
         def _(args, receipt):
             return cruxial.HALT("no msg-id") if receipt.id is None else cruxial.PASS
 
+    Pass ``label`` to name the rule in the dashboard's Protection view (e.g.
+    ``@verify("issue_refund", label="refund ≤ $1000")``); without it, the hook's
+    function name is shown (anonymous lambdas just show as a count).
+
     Returns the hook unchanged so it stays independently callable/testable.
     """
 
     def deco(hook: VerifyHook) -> VerifyHook:
-        (registry or default_action_registry()).register_verify(tool, hook)
+        (registry or default_action_registry()).register_verify(tool, hook, label=label)
         return hook
 
     return deco

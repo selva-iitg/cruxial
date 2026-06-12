@@ -285,6 +285,7 @@ class Cruxial:
                         "is_action": self._actions.is_action(name),
                         "has_receipt": self._receipts.has(name),
                         "verify_count": self._actions.verify_count(name),
+                        "verify_labels": self._actions.verify_labels(name),
                     }
                     for name in self.schemas
                 })

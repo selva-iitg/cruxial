@@ -196,6 +196,20 @@ def test_action_decorator_bare_and_param():
         reg.clear()
 
 
+def test_verify_labels():
+    reg = ActionRegistry()
+    reg.mark_action("t")
+    reg.register_verify("t", lambda a, r: PASS, label="explicit rule")
+
+    def named_rule(a, r):
+        return PASS
+
+    reg.register_verify("t", named_rule)            # falls back to the function name
+    reg.register_verify("t", lambda a, r: PASS)     # anonymous + no label → omitted
+    assert reg.verify_labels("t") == ["explicit rule", "named_rule"]
+    assert reg.verify_count("t") == 3               # count still reflects all three
+
+
 def test_verify_decorator_registers_and_returns_hook():
     reg = default_action_registry()
     reg.clear()
