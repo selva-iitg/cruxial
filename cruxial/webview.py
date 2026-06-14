@@ -133,6 +133,10 @@ body{background:var(--bg);color:var(--text);
 .live.off i{background:var(--faint);animation:none;box-shadow:none}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,207,142,.45)}70%{box-shadow:0 0 0 6px rgba(62,207,142,0)}100%{box-shadow:0 0 0 0 rgba(62,207,142,0)}}
 .wrap{padding-top:30px;padding-bottom:90px}
+.hero{font-size:19px;font-weight:600;letter-spacing:-.015em;margin:2px 2px 22px;line-height:1.45;min-height:1px}
+.hero .em{font-weight:780}
+.hero.ok .em{color:var(--green)} .hero.bad .em{color:var(--red)} .hero.warn .em{color:var(--amber)}
+.hero .sub2{display:block;font-size:13px;font-weight:400;color:var(--muted);margin-top:5px}
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:30px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;
  transition:border-color .15s,transform .15s,background .15s}
@@ -215,11 +219,12 @@ td.tool{font-weight:550;letter-spacing:-.005em}
  <span class="live" id="live"><i></i>live</span>
 </div></div>
 <div class="wrap">
+ <div class="hero" id="hero"></div>
  <div class="cards">
-  <div class="card ok" data-filter="confirmed"><div class="n" id="c-posted">—</div><div class="l">Confirmed · receipt</div></div>
-  <div class="card sf" data-filter="unknown"><div class="n" id="c-unknown">—</div><div class="l">⚠ Silent failures</div></div>
-  <div class="card rv" data-filter="needs_review"><div class="n" id="c-review">—</div><div class="l">Needs review</div></div>
-  <div class="card" data-filter="all"><div class="n" id="c-total">—</div><div class="l">Operations</div></div>
+  <div class="card ok" data-filter="confirmed"><div class="n" id="c-posted">—</div><div class="l" title="actions backed by a real receipt">Confirmed · receipt</div></div>
+  <div class="card sf" data-filter="unknown"><div class="n" id="c-unknown">—</div><div class="l" title="claimed or expected, but no receipt — the agent's 'done' couldn't be proven">⚠ Silent failures</div></div>
+  <div class="card rv" data-filter="needs_review"><div class="n" id="c-review">—</div><div class="l" title="a verify rule halted the action for human review">Needs review</div></div>
+  <div class="card" data-filter="all"><div class="n" id="c-total">—</div><div class="l" title="total side-effecting operations recorded">Operations</div></div>
  </div>
  <div id="prot-section">
   <div class="toolbar" style="margin-top:2px"><h2>Protection</h2><span class="sub" id="psub"></span></div>
@@ -257,6 +262,19 @@ function render(){
  if(!LAST)return; const d=LAST;
  c('c-posted',d.counts.posted);c('c-unknown',d.counts.unknown);
  c('c-review',d.counts.needs_review);c('c-total',d.counts.total);
+ (function(){const h=document.getElementById('hero'),t=d.counts.total,p=d.counts.posted,
+  u=d.counts.unknown,rv=d.counts.needs_review;
+  if(!t){h.className='hero';h.innerHTML='';}
+  else if(u>0){h.className='hero bad';
+   h.innerHTML='<span class="em">'+u+'</span> of '+t+' agent action'+(t===1?'':'s')+" weren't confirmed."
+    +'<span class="sub2">said \\u201cdone\\u201d — no receipt to prove it · '+p+' confirmed'
+    +(rv?' · '+rv+' needs review':'')+'</span>';}
+  else if(rv>0){h.className='hero warn';
+   h.innerHTML='<span class="em">'+rv+'</span> action'+(rv===1?'':'s')+' need review · '+p+' confirmed.'
+    +'<span class="sub2">no silent failures</span>';}
+  else{h.className='hero ok';
+   h.innerHTML='<span class="em">All '+t+' action'+(t===1?'':'s')+' confirmed</span> by a receipt.'
+    +'<span class="sub2">no silent failures — every \\u201cdone\\u201d is backed by proof</span>';}})();
  document.querySelectorAll('.card[data-filter]').forEach(el=>
   el.classList.toggle('active', !!FILTER && el.dataset.filter===FILTER));
  // per-tool activity — cross-links Protection ↔ Operations
@@ -274,7 +292,7 @@ function render(){
   +'<td class="tool">'+esc(o.tool)+'</td><td>'+badge(o.state)+'</td>'
   +'<td class="mono">'+(o.receipt&&o.receipt.id?esc(o.receipt.id):'<span class="dash">—</span>')+'</td>'
   +'<td class="mono muted">'+esc(o.actor||'—')+'</td>'
-  +'<td class="mono muted">'+ago(o.ts_intent)+'</td></tr>').join('');}
+  +'<td class="mono muted" title="'+esc(when(o.ts_intent))+'">'+ago(o.ts_intent)+'</td></tr>').join('');}
  document.getElementById('sub').textContent = d.operations.length
    ? (FILTER? ops.length+' of '+d.operations.length : d.operations.length+' shown') : '';
  // protection + activity + failing highlight
