@@ -143,6 +143,11 @@ body{background:var(--bg);color:var(--text);
 .card.ok .n{color:var(--green)} .card.rv .n{color:var(--amber)}
 .card.sf{border-color:var(--red-b);background:linear-gradient(180deg,rgba(241,87,122,.05),transparent 60%),var(--surface)}
 .card.sf .n{color:var(--red)} .card.sf .l{color:#c97b8c}
+.card[data-filter]{cursor:pointer}
+.card.active{border-color:var(--border-2);box-shadow:inset 0 0 0 1px var(--border-2)}
+.card.sf.active{border-color:var(--red);box-shadow:inset 0 0 0 1px rgba(241,87,122,.45)}
+.afail{color:#ff8aa1;font-weight:560} .link{color:var(--green);cursor:pointer}
+tr.fail-row td:first-child{box-shadow:inset 3px 0 0 var(--red)}
 .toolbar{display:flex;align-items:baseline;justify-content:space-between;margin:0 2px 10px}
 .toolbar h2{font-size:13px;font-weight:600;letter-spacing:-.01em}
 .toolbar .sub{font-size:12px;color:var(--faint)}
@@ -202,15 +207,15 @@ td.tool{font-weight:550;letter-spacing:-.005em}
 </div></div>
 <div class="wrap">
  <div class="cards">
-  <div class="card ok"><div class="n" id="c-posted">—</div><div class="l">Confirmed · receipt</div></div>
-  <div class="card sf"><div class="n" id="c-unknown">—</div><div class="l">⚠ Silent failures</div></div>
-  <div class="card rv"><div class="n" id="c-review">—</div><div class="l">Needs review</div></div>
-  <div class="card"><div class="n" id="c-total">—</div><div class="l">Operations</div></div>
+  <div class="card ok" data-filter="confirmed"><div class="n" id="c-posted">—</div><div class="l">Confirmed · receipt</div></div>
+  <div class="card sf" data-filter="unknown"><div class="n" id="c-unknown">—</div><div class="l">⚠ Silent failures</div></div>
+  <div class="card rv" data-filter="needs_review"><div class="n" id="c-review">—</div><div class="l">Needs review</div></div>
+  <div class="card" data-filter="all"><div class="n" id="c-total">—</div><div class="l">Operations</div></div>
  </div>
  <div id="prot-section">
   <div class="toolbar" style="margin-top:2px"><h2>Protection</h2><span class="sub" id="psub"></span></div>
   <div class="panel-tbl" style="margin-bottom:28px">
-   <table><thead><tr><th>Tool</th><th>Type</th><th>Receipt</th><th>Checks</th></tr></thead>
+   <table><thead><tr><th>Tool</th><th>Type</th><th>Receipt</th><th>Checks</th><th>Activity</th></tr></thead>
    <tbody id="prot"></tbody></table>
   </div>
  </div>
@@ -235,42 +240,67 @@ function ago(iso){if(!iso)return'—';const d=(Date.now()-new Date(iso).getTime(
  if(d<86400)return(d/3600|0)+'h ago';return(d/86400|0)+'d ago';}
 function when(iso){if(!iso)return'—';try{return new Date(iso).toLocaleString();}catch(e){return iso;}}
 function c(id,v){document.getElementById(id).textContent=v;}
-async function refresh(){try{
- const d=await(await fetch('/api/state')).json();
+let LAST=null, FILTER=null;
+function matchFilter(st){if(!FILTER)return true;
+ if(FILTER==='confirmed')return st==='posted'||st==='sent'||st==='queued';return st===FILTER;}
+function setFilter(f){FILTER=f;render();}
+function render(){
+ if(!LAST)return; const d=LAST;
  c('c-posted',d.counts.posted);c('c-unknown',d.counts.unknown);
  c('c-review',d.counts.needs_review);c('c-total',d.counts.total);
+ document.querySelectorAll('.card[data-filter]').forEach(el=>
+  el.classList.toggle('active', !!FILTER && el.dataset.filter===FILTER));
+ // per-tool activity — cross-links Protection ↔ Operations
+ const act={};
+ (d.operations||[]).forEach(o=>{const a=act[o.tool]||(act[o.tool]={calls:0,unknown:0});
+  a.calls++; if(o.state==='unknown')a.unknown++;});
+ const ops=(d.operations||[]).filter(o=>matchFilter(o.state));
  const rows=document.getElementById('rows'),empty=document.getElementById('empty');
- document.getElementById('sub').textContent=d.operations.length?d.operations.length+' shown':'';
- if(!d.operations.length){empty.style.display='block';rows.innerHTML='';}
- else{empty.style.display='none';rows.innerHTML=d.operations.map(o=>
+ if(!d.operations.length){empty.style.display='block';
+  empty.innerHTML='No operations yet — mark a tool <code>@cruxial.action</code> and run your app.';rows.innerHTML='';}
+ else if(!ops.length){empty.style.display='block';
+  empty.innerHTML='No operations match this filter. <span class="link" onclick="setFilter(null)">clear</span>';rows.innerHTML='';}
+ else{empty.style.display='none';rows.innerHTML=ops.map(o=>
   '<tr class="row" data-op="'+esc(o.op_id)+'">'
-  +'<td class="tool">'+esc(o.tool)+'</td>'
-  +'<td>'+badge(o.state)+'</td>'
+  +'<td class="tool">'+esc(o.tool)+'</td><td>'+badge(o.state)+'</td>'
   +'<td class="mono">'+(o.receipt&&o.receipt.id?esc(o.receipt.id):'<span class="dash">—</span>')+'</td>'
   +'<td class="mono muted">'+esc(o.actor||'—')+'</td>'
   +'<td class="mono muted">'+ago(o.ts_intent)+'</td></tr>').join('');}
+ document.getElementById('sub').textContent = d.operations.length
+   ? (FILTER? ops.length+' of '+d.operations.length : d.operations.length+' shown') : '';
+ // protection + activity + failing highlight
  const prot=document.getElementById('prot');
  const hasProt=d.protection&&d.protection.length;
  document.getElementById('prot-section').style.display=hasProt?'':'none';
  if(hasProt){
   document.getElementById('psub').textContent=d.protection.length+' tools';
   prot.innerHTML=d.protection.map(p=>{
+   const a=act[p.tool];
+   const activity=!a?'<span class="muted">—</span>'
+    : a.calls+' call'+(a.calls===1?'':'s')+(a.unknown?' · <span class="afail">'+a.unknown+' unknown</span>':'');
    if(!p.is_action)return '<tr><td class="tool">'+esc(p.tool)+'</td>'
-     +'<td><span class="tag ro">read-only</span></td><td class="muted">—</td><td class="muted">—</td></tr>';
-   const rc=p.has_receipt?'<span class="rcpt ok">✓ adapter</span>'
-     :'<span class="rcpt warn">⚠ no adapter</span>';
+     +'<td><span class="tag ro">read-only</span></td><td class="muted">—</td>'
+     +'<td class="muted">—</td><td>'+activity+'</td></tr>';
+   const fail=!p.has_receipt && a && a.unknown>0;
+   const rc=p.has_receipt?'<span class="rcpt ok">✓ adapter</span>':'<span class="rcpt warn">⚠ no adapter</span>';
    let chk;
    if(p.verify_labels&&p.verify_labels.length)
      chk=p.verify_labels.map(l=>'<span class="chk">'+esc(l)+'</span>').join('');
    else if(p.verify_count>0)
      chk='<span class="mono muted">'+p.verify_count+' check'+(p.verify_count===1?'':'s')+'</span>';
    else chk='<span class="muted">none</span>';
-   return '<tr><td class="tool">'+esc(p.tool)+'</td><td><span class="tag act">action</span></td><td>'+rc
-     +'</td><td>'+chk+'</td></tr>';}).join('');
+   return '<tr'+(fail?' class="fail-row"':'')+'><td class="tool">'+esc(p.tool)+'</td>'
+     +'<td><span class="tag act">action</span></td><td>'+rc+'</td><td>'+chk+'</td><td>'+activity+'</td></tr>';
+  }).join('');
  }else{prot.innerHTML='';document.getElementById('psub').textContent='';}
  document.getElementById('foot').textContent='db · '+d.db;
- document.getElementById('live').className='live';
+}
+async function refresh(){try{
+ LAST=await(await fetch('/api/state')).json();
+ document.getElementById('live').className='live'; render();
 }catch(e){document.getElementById('live').className='live off';}}
+document.querySelectorAll('.card[data-filter]').forEach(el=>el.addEventListener('click',()=>{
+ const f=el.dataset.filter; FILTER=(f==='all')?null:(FILTER===f?null:f); render();}));
 document.getElementById('rows').addEventListener('click',e=>{
  const tr=e.target.closest('tr[data-op]');if(tr)openOp(tr.dataset.op);});
 async function openOp(id){const o=await(await fetch('/api/op/'+id)).json();
