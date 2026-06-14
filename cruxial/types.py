@@ -216,4 +216,8 @@ class Operation:
     policy: dict[str, Any] | None = None  # {"decision","by"} — BYO engine, RECORDED not enforced
     receipt: Receipt | None = None
     note: str | None = None  # human-readable resolution note (e.g. the HALT/FLAG reason)
+    # What the MODEL claimed (the "Said" of Said-vs-Did). Structured/non-PII by
+    # default ("claimed a completed 'send' action"); the verbatim prose only when
+    # capture_args is on. None for ops with no narrated claim.
+    claim: str | None = None
     ts_resolved: str | None = None

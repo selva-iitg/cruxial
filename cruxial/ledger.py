@@ -67,7 +67,7 @@ class StateResolver:
 _COLS = (
     "op_id", "ts_intent", "ts_resolved", "actor", "tool", "target",
     "requested_hash", "policy_decision", "policy_by", "state",
-    "receipt_ok", "receipt_id", "receipt_kind", "note",
+    "receipt_ok", "receipt_id", "receipt_kind", "note", "claim",
 )
 _SELECT = "SELECT " + ", ".join(_COLS) + " FROM operations"
 
@@ -148,7 +148,7 @@ class Ledger:
     @staticmethod
     def _row_to_op(row: tuple) -> Operation:
         (op_id, ts_intent, ts_resolved, actor, tool, target, _req_hash,
-         pol_dec, pol_by, state, r_ok, r_id, r_kind, note) = row
+         pol_dec, pol_by, state, r_ok, r_id, r_kind, note, claim) = row
         receipt = None
         if r_ok is not None or r_id is not None or r_kind is not None:
             receipt = Receipt(ok=bool(r_ok), id=r_id, kind=r_kind or "generic")
@@ -158,5 +158,5 @@ class Ledger:
         return Operation(
             op_id=op_id, tool=tool, state=state, ts_intent=ts_intent,
             actor=actor, target=target, requested=None, policy=policy,
-            receipt=receipt, note=note, ts_resolved=ts_resolved,
+            receipt=receipt, note=note, claim=claim, ts_resolved=ts_resolved,
         )

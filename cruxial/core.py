@@ -712,16 +712,18 @@ class Cruxial:
             repaired=True,
         )
 
-    def record_absence(self, tool: str) -> Operation:
+    def record_absence(self, tool: str, claim: str | None = None) -> Operation:
         """A claimed completion with no matching tool call → a deterministic
         UNKNOWN operation in the ledger (the absence catch — the receipt's
-        absence is the oracle, not a model re-prompt). Also records the
-        tool_bypass telemetry row. Returns the Operation. Fail-open."""
+        absence is the oracle, not a model re-prompt). `claim` is what the model
+        said (the "Said" of Said-vs-Did). Also records the tool_bypass telemetry
+        row. Returns the Operation. Fail-open."""
         now = utc_now()
         op = Operation(
             op_id=new_op_id(), tool=tool, state="unknown", ts_intent=now,
             actor=self.config.actor, receipt=None,
-            note="claimed completion with no matching tool call", ts_resolved=now,
+            note="claimed completion with no matching tool call", claim=claim,
+            ts_resolved=now,
         )
         if self.config.ledger:
             self._ledger.append(op)
@@ -831,7 +833,7 @@ class NoopCruxial:
     def build_repair_prompt(self, failure: Failure, failed_args: dict[str, Any]) -> str:
         return ""
 
-    def record_absence(self, tool: str) -> None:
+    def record_absence(self, tool: str, claim: str | None = None) -> None:
         return None
 
     def close(self) -> None:

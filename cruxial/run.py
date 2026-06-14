@@ -162,7 +162,10 @@ def run(
             # confident model just re-affirms the false claim).
             bypass_finding = suspicion
             if hasattr(cx, "record_absence"):
-                op = cx.record_absence(suspicion.tool)
+                capture = getattr(getattr(cx, "config", None), "capture_args", False)
+                claim = ((text or "")[:240].strip() if capture
+                         else f"claimed a completed '{suspicion.action}' action")
+                op = cx.record_absence(suspicion.tool, claim=claim)
                 if op is not None:
                     absence_ops.append(op)
             # OPTIONAL recovery (opt-in), demoted from detector to remediation:
@@ -297,7 +300,10 @@ async def arun(
             # DETERMINISTIC absence catch (receipt-absence oracle, not a re-prompt).
             bypass_finding = suspicion
             if hasattr(cx, "record_absence"):
-                op = cx.record_absence(suspicion.tool)
+                capture = getattr(getattr(cx, "config", None), "capture_args", False)
+                claim = ((text or "")[:240].strip() if capture
+                         else f"claimed a completed '{suspicion.action}' action")
+                op = cx.record_absence(suspicion.tool, claim=claim)
                 if op is not None:
                     absence_ops.append(op)
             if bypass in ("recover", "strict"):  # opt-in remediation

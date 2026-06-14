@@ -23,7 +23,7 @@ def _op_to_dict(op: Any) -> dict:
     return {
         "op_id": op.op_id, "tool": op.tool, "state": op.state,
         "actor": op.actor, "ts_intent": op.ts_intent, "ts_resolved": op.ts_resolved,
-        "note": op.note,
+        "note": op.note, "claim": op.claim,
         "policy": (op.policy or {}).get("decision"),
         "receipt": ({"ok": r.ok, "id": r.id, "kind": r.kind} if r else None),
     }
@@ -203,6 +203,11 @@ td.tool{font-weight:550;letter-spacing:-.005em}
 .fix-h{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-bottom:9px}
 .code{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;
  font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--text);white-space:pre;overflow-x:auto}
+.sd{margin-top:20px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.sd-row{display:flex;gap:14px;padding:12px 15px;font-size:13px;align-items:center}
+.sd-row+.sd-row{border-top:1px solid var(--border)}
+.sd-k{flex:0 0 50px;color:var(--muted);font-size:12px}
+.sd-v.said{color:#f6c869}
 @media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
 <div class="bar"><div class="bar-in">
@@ -319,6 +324,10 @@ async function openOp(id){const o=await(await fetch('/api/op/'+id)).json();
    +'<span class="copy" onclick="copyFix(this)">copy</span></div>'
    +'<div class="code">'+esc(FIXSNIP)+'</div></div>';
  }else if(o.note){extra='<div class="note'+(nr?' r':'')+'">'+esc(o.note)+'</div>';}
+ const sd=o.claim?('<div class="sd">'
+  +'<div class="sd-row"><span class="sd-k">🗣 said</span><span class="sd-v said">'+esc(o.claim)+'</span></div>'
+  +'<div class="sd-row"><span class="sd-k">🔎 did</span><span class="sd-v">'+badge(o.state)
+   +(o.receipt&&o.receipt.id?' · receipt '+esc(o.receipt.id):' · no receipt')+'</span></div></div>'):'';
  document.getElementById('panel-body').innerHTML=
   '<div class="ph"><div><div class="t">Operation</div>'
   +'<div class="id">'+esc(o.op_id)+'<span class="copy" id="cp" onclick="cp(\\''+esc(o.op_id)+'\\')">copy</span></div></div>'
@@ -331,7 +340,7 @@ async function openOp(id){const o=await(await fetch('/api/op/'+id)).json();
   +'<div class="k">resolved</div><div class="v mono muted">'+when(o.ts_resolved)+'</div>'
   +'<div class="k">policy</div><div class="v mono muted">'+esc(o.policy||'—')+'</div>'
   +'<div class="k">receipt</div><div class="v mono">'+rid+'</div>'
-  +'</div>'+extra+'</div>';
+  +'</div>'+sd+extra+'</div>';
  document.getElementById('panel').classList.add('open');
  document.getElementById('backdrop').classList.add('open');}
 function closePanel(){document.getElementById('panel').classList.remove('open');

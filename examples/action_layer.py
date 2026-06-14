@@ -88,7 +88,10 @@ def main() -> None:
         "issue_refund": issue_refund, "lookup_order": lookup_order,
     }
     schemas = {name: {"type": "object"} for name in executors}
-    cx = guard(schemas, executors, sink=SqliteSink(DB), config=GuardConfig(actor="support-bot"))
+    # capture_args=True so the dashboard's "Said vs Did" shows the verbatim claim
+    # (fake data here — real apps leave it off and get the non-PII structured claim).
+    cx = guard(schemas, executors, sink=SqliteSink(DB),
+               config=GuardConfig(actor="support-bot", capture_args=True))
 
     def show(label, r):
         rid = r.receipt.id if r.receipt else "—"

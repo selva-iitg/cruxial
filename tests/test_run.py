@@ -311,6 +311,17 @@ def test_absence_populates_operations_and_render():
             tools=OPENAI_TOOLS, executors=ex, config=NULL)
     assert len(r.operations) == 1 and r.operations[0].state == "unknown"
     assert "unknown" in r.render() and "done" not in r.render()
+    # Said-vs-Did: structured (non-PII) claim by default
+    assert r.operations[0].claim == "claimed a completed 'send' action"
+
+
+def test_absence_claim_verbatim_with_capture_args():
+    ex, _ = _executors()
+    client = FakeOpenAI([_oai_text("Done! I've sent the email to a@b.com.")])
+    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "x"}],
+            tools=OPENAI_TOOLS, executors=ex,
+            config=GuardConfig(sinks=("null",), capture_args=True))
+    assert "Done! I've sent the email to a@b.com." in r.operations[0].claim
 
 
 def test_run_action_posts_and_renders():

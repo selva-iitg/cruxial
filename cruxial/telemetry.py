@@ -199,6 +199,7 @@ class SqliteSink:
         receipt_id TEXT,
         receipt_kind TEXT,
         note TEXT,
+        claim TEXT,
         cruxial_version TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_op_tool ON operations(tool);
@@ -240,6 +241,9 @@ class SqliteSink:
             acols = {row[1] for row in self._conn.execute("PRAGMA table_info(actions)").fetchall()}
             if acols and "verify_labels" not in acols:
                 self._conn.execute("ALTER TABLE actions ADD COLUMN verify_labels TEXT")
+            ocols = {row[1] for row in self._conn.execute("PRAGMA table_info(operations)").fetchall()}
+            if ocols and "claim" not in ocols:
+                self._conn.execute("ALTER TABLE operations ADD COLUMN claim TEXT")
         except Exception:
             pass  # Fail-open: migration failure must not break boot.
 
@@ -346,8 +350,8 @@ class SqliteSink:
                     INSERT OR REPLACE INTO operations
                       (op_id, ts_intent, ts_resolved, actor, tool, target,
                        requested_hash, policy_decision, policy_by, state,
-                       receipt_ok, receipt_id, receipt_kind, note, cruxial_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       receipt_ok, receipt_id, receipt_kind, note, claim, cruxial_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         op.op_id, op.ts_intent, op.ts_resolved, op.actor, op.tool, op.target,
@@ -356,7 +360,7 @@ class SqliteSink:
                         (1 if r.ok else 0) if r is not None else None,
                         r.id if r is not None else None,
                         r.kind if r is not None else None,
-                        op.note, __version__,
+                        op.note, getattr(op, "claim", None), __version__,
                     ),
                 )
                 self._conn.commit()
