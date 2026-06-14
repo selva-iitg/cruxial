@@ -199,6 +199,10 @@ td.tool{font-weight:550;letter-spacing:-.005em}
 .note{margin-top:22px;padding:14px 16px;background:var(--amber-t);border:1px solid var(--amber-b);
  border-radius:10px;font-size:12.5px;line-height:1.5;color:#f3cf8a}
 .note.r{background:var(--red-t);border-color:var(--red-b);color:#ffaabb}
+.fix{margin-top:22px}
+.fix-h{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-bottom:9px}
+.code{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+ font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--text);white-space:pre;overflow-x:auto}
 @media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
 <div class="bar"><div class="bar-in">
@@ -240,7 +244,7 @@ function ago(iso){if(!iso)return'—';const d=(Date.now()-new Date(iso).getTime(
  if(d<86400)return(d/3600|0)+'h ago';return(d/86400|0)+'d ago';}
 function when(iso){if(!iso)return'—';try{return new Date(iso).toLocaleString();}catch(e){return iso;}}
 function c(id,v){document.getElementById(id).textContent=v;}
-let LAST=null, FILTER=null;
+let LAST=null, FILTER=null, FIXSNIP='';
 function matchFilter(st){if(!FILTER)return true;
  if(FILTER==='confirmed')return st==='posted'||st==='sent'||st==='queued';return st===FILTER;}
 function setFilter(f){FILTER=f;render();}
@@ -306,6 +310,15 @@ document.getElementById('rows').addEventListener('click',e=>{
 async function openOp(id){const o=await(await fetch('/api/op/'+id)).json();
  const rid=o.receipt&&o.receipt.id?esc(o.receipt.id):'<span class="dash">—</span>';
  const nr=grp(o.state)==='r';
+ const prot=(LAST&&LAST.protection||[]).find(p=>p.tool===o.tool);
+ const needFix=o.state==='unknown'&&prot&&prot.is_action&&!prot.has_receipt;
+ let extra='';
+ if(needFix){
+  FIXSNIP='@cruxial.receipt("'+o.tool+'")\\ndef _(raw):\\n    return cruxial.Receipt(ok=True, id=raw["id"])  # read the real proof';
+  extra='<div class="fix"><div class="fix-h">Fix · add a receipt adapter'
+   +'<span class="copy" onclick="copyFix(this)">copy</span></div>'
+   +'<div class="code">'+esc(FIXSNIP)+'</div></div>';
+ }else if(o.note){extra='<div class="note'+(nr?' r':'')+'">'+esc(o.note)+'</div>';}
  document.getElementById('panel-body').innerHTML=
   '<div class="ph"><div><div class="t">Operation</div>'
   +'<div class="id">'+esc(o.op_id)+'<span class="copy" id="cp" onclick="cp(\\''+esc(o.op_id)+'\\')">copy</span></div></div>'
@@ -318,13 +331,15 @@ async function openOp(id){const o=await(await fetch('/api/op/'+id)).json();
   +'<div class="k">resolved</div><div class="v mono muted">'+when(o.ts_resolved)+'</div>'
   +'<div class="k">policy</div><div class="v mono muted">'+esc(o.policy||'—')+'</div>'
   +'<div class="k">receipt</div><div class="v mono">'+rid+'</div>'
-  +'</div>'+(o.note?'<div class="note'+(nr?' r':'')+'">'+esc(o.note)+'</div>':'')+'</div>';
+  +'</div>'+extra+'</div>';
  document.getElementById('panel').classList.add('open');
  document.getElementById('backdrop').classList.add('open');}
 function closePanel(){document.getElementById('panel').classList.remove('open');
  document.getElementById('backdrop').classList.remove('open');}
 function cp(id){try{navigator.clipboard.writeText(id);const b=document.getElementById('cp');
  b.textContent='copied';setTimeout(()=>b.textContent='copy',1200);}catch(e){}}
+function copyFix(el){try{navigator.clipboard.writeText(FIXSNIP);el.textContent='copied';
+ setTimeout(()=>el.textContent='copy',1200);}catch(e){}}
 document.getElementById('backdrop').addEventListener('click',closePanel);
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
 refresh();setInterval(refresh,2000);
