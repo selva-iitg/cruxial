@@ -46,7 +46,36 @@ def _state_payload(led: Ledger, db_path: Path) -> dict:
     }
 
 
-def _make_handler(led: Ledger, db_path: Path):
+def _read(db_path: Path, fn):
+    """Run `fn(ledger)` against a FRESH sqlite reader, then close it.
+
+    The viewer must open the ledger per request, not hold one connection: an
+    agent run that replaces the db file (e.g. a fresh run truncates/recreates
+    it) leaves a long-lived connection pinned to the old, unlinked inode — so
+    the dashboard would silently keep serving stale data. Re-opening each
+    request is cheap for a local tool and always reflects the current file.
+    Fail-open: a transient read error (file mid-swap) yields None.
+    """
+    sink = None
+    try:
+        sink = SqliteSink(db_path)
+        return fn(Ledger(sink))
+    except Exception:
+        return None
+    finally:
+        if sink is not None:
+            try:
+                sink.close()
+            except Exception:
+                pass
+
+
+_EMPTY_STATE = {"db": "", "counts": {"total": 0, "posted": 0, "unknown": 0,
+                                     "needs_review": 0, "failed": 0},
+                "operations": [], "protection": []}
+
+
+def _make_handler(db_path: Path):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
@@ -63,9 +92,11 @@ def _make_handler(led: Ledger, db_path: Path):
             if path == "/":
                 self._send(200, _PAGE.encode(), "text/html; charset=utf-8")
             elif path == "/api/state":
-                self._json(_state_payload(led, db_path))
+                payload = _read(db_path, lambda led: _state_payload(led, db_path))
+                self._json(payload if payload is not None else {**_EMPTY_STATE, "db": str(db_path)})
             elif path.startswith("/api/op/"):
-                op = led.get(path[len("/api/op/"):])
+                op_id = path[len("/api/op/"):]
+                op = _read(db_path, lambda led: led.get(op_id))
                 self._json(_op_to_dict(op) if op else {"error": "not found"}, 200 if op else 404)
             else:
                 self._send(404, b"not found", "text/plain")
@@ -80,9 +111,7 @@ def serve(db_path: Path, port: int = 7878, open_browser: bool = True) -> int:
     if not db_path.exists():
         print(f"error: no telemetry database at {db_path}")
         return 1
-    sink = SqliteSink(db_path)
-    led = Ledger(sink)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(led, db_path))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(db_path))
     url = f"http://127.0.0.1:{httpd.server_address[1]}"
     print(f"cruxial · action ledger → {url}   (ctrl-c to stop)", flush=True)
     print(f"  db: {db_path}", flush=True)
@@ -97,7 +126,6 @@ def serve(db_path: Path, port: int = 7878, open_browser: bool = True) -> int:
         print("\nstopped.")
     finally:
         httpd.server_close()
-        sink.close()
     return 0
 
 

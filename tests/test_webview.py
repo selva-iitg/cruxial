@@ -65,8 +65,7 @@ def test_page_has_api_hooks():
 
 def test_server_serves_page_and_api(tmp_path):
     db = _ledger_db(tmp_path)
-    led = Ledger(SqliteSink(db))
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(led, db))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(db))
     port = httpd.server_address[1]
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
@@ -89,6 +88,35 @@ def test_server_serves_page_and_api(tmp_path):
             assert False, "expected 404"
         except urllib.error.HTTPError as e:
             assert e.code == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_server_reflects_replaced_db(tmp_path):
+    # Regression: the viewer re-opens the db per request. A fresh agent run that
+    # removes + recreates the file must NOT leave the server pinned to the old,
+    # unlinked inode (which would silently serve stale data).
+    db = _ledger_db(tmp_path)                                   # 2 ops
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(db))
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        s1 = json.loads(urllib.request.urlopen(base + "/api/state", timeout=3).read())
+        assert s1["counts"]["total"] == 2
+
+        # simulate a fresh run: replace the file in place with a single op
+        db.unlink()
+        ar = ActionRegistry(); ar.mark_action("send_email")
+        rr = ReceiptRegistry(); rr.register("send_email", id_field("message_id", kind="email"))
+        guard({"send_email": {"type": "object"}},
+              {"send_email": lambda **k: {"message_id": "m9"}},
+              sink=SqliteSink(db), receipt_registry=rr, action_registry=ar,
+              config=__import__("cruxial").GuardConfig(actor="bot")).execute("send_email", {"to": "x@y"})
+
+        s2 = json.loads(urllib.request.urlopen(base + "/api/state", timeout=3).read())
+        assert s2["counts"]["total"] == 1      # fresh read of the new file, not the stale 2
     finally:
         httpd.shutdown()
         httpd.server_close()

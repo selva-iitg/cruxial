@@ -334,7 +334,18 @@ def detect_bypass(
 
         called = set(called_tools)
 
-        # 4. A side-effecting tool whose action was claimed but never called.
+        # Actions already satisfied by a tool that ACTUALLY ran (incl. aliases).
+        # A claim of "sent the email" is backed by a real send_email call even
+        # if a sibling comms tool (send_sms) shares the same canonical "send"
+        # action — without this, the sibling gets flagged as a false bypass.
+        covered: set[str] = set()
+        for name in called:
+            for a in _tool_actions(name):
+                covered.add(a)
+                covered |= _ACTION_ALIASES.get(a, frozenset())
+
+        # 4. A side-effecting tool whose action was claimed but never called —
+        #    and whose action no called tool already covers.
         for name in names:
             if name not in se or name in called:
                 continue
@@ -343,6 +354,8 @@ def detect_bypass(
             # communication-cluster alias (notify ≈ send ≈ message), so
             # "notified the team" matches a send_email tool.
             for action in sorted(asserted):
+                if action in covered:
+                    continue  # a tool that ran already satisfies this claim
                 if action in actions or (_ACTION_ALIASES.get(action, frozenset()) & actions):
                     return BypassSuspicion(
                         tool=name,
