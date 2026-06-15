@@ -145,6 +145,35 @@ Drop to `guard().check()` / `.execute()`.
 **Async?** Use `await cruxial.arun(...)` with an `AsyncOpenAI` / async client, and
 `await guard().aexecute(...)` for async tool executors — same contract, everything awaited.
 
+## Own your loop
+
+`cruxial.run()` is the easy path when Cruxial drives the turn — but the loop isn't
+always yours to hand over. You might be **streaming** tokens, inside a framework
+that owns the model call (LangGraph, CrewAI, an Assistants/Responses runtime), or
+dispatching a single tool call in a worker. Then use the two primitives `run()` is
+built on:
+
+```python
+cx = guard(schemas=schemas, executors=executors)
+
+# 1. Every tool call your loop executes → validate, run, get the receipt + state.
+result = cx.execute(name, args)        # records the operation automatically
+if result.state == "needs_review":     # a verify HALT — surface it, don't blind-retry
+    ...
+
+# 2. A turn with NO tool call whose TEXT claims an action → detect AND record it:
+if not tool_calls_this_turn:
+    cx.check_bypass(assistant_text, called_tools=tools_called_so_far)
+    # records the "said done, never did it" as an `unknown` op → shows in `cruxial view`
+```
+
+`cx.execute()` already records the full operation (receipt-derived `state`), so the
+healthy path **and** the called-but-no-proof failure are covered for free. The one
+line not to skip is **`cx.check_bypass()`** on text-only turns — the safe, fused
+detect-and-record. (The bare `cruxial.bypass.detect_bypass()` *detects* but does
+not record, which silently drops the catch.) Anything `cruxial.run()` lands in the
+ledger, these two calls land yourself.
+
 ## What it catches
 
 Eight failure categories. Every interception is logged with the failure
@@ -174,17 +203,20 @@ failure. `cruxial.run()` catches it:
 result = cruxial.run(client, model="gpt-4o", messages=messages,
                      tools=tools, executors=executors)   # bypass check is on by default
 
-if result.bypass:        # the model claimed an action and, when re-prompted, confirmed it
+if result.bypass:        # the model claimed an action it never called → recorded as `unknown`
     print("caught a bypass:", result.bypass.tool)
 ```
 
 **How it works (zero cost on normal turns):** a final text turn is flagged
 *only* when it claims a completed action (`"sent"`, not `"send"`), attributed
 to the assistant (not *"you"* / *"the scheduler"* / *"automatically"*), for a
-side-effecting tool that was never called. A flagged turn gets **one neutral
-re-prompt** — the model either re-emits the call (corrected + executed) or
-declines (we do nothing). We only ever act on a model-confirmed re-emission, so
-we never fabricate an action.
+side-effecting tool that was never called — and that no tool which actually ran
+already satisfies. By default (`bypass="on"`) the flagged action is recorded
+**deterministically as `unknown`**, zero extra model calls — the receipt's
+absence is the oracle, not the model's say-so. (Opt into remediation with
+`bypass="recover"`, one neutral re-prompt, or `bypass="strict"`.) Own your loop
+instead of `run()`? `cx.check_bypass(text, called_tools=...)` does the same
+detect-and-record.
 
 Benchmarked on a 132-scenario adversarial set ([BENCHMARKS.md](BENCHMARKS.md)):
 **0 false actions**, acted-on precision **100%** (sonnet-4-6 and gpt-4o), 100% correction

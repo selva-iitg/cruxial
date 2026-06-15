@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from cruxial.bypass import BypassSuspicion, detect_bypass
-from cruxial.core import Cruxial, GuardConfig, guard as _guard
+from cruxial.core import Cruxial, GuardConfig, _absence_claim, guard as _guard
 from cruxial.errors import ProviderUnsupported
 
 
@@ -163,9 +163,8 @@ def run(
             bypass_finding = suspicion
             if hasattr(cx, "record_absence"):
                 capture = getattr(getattr(cx, "config", None), "capture_args", False)
-                claim = ((text or "")[:240].strip() if capture
-                         else f"claimed a completed '{suspicion.action}' action")
-                op = cx.record_absence(suspicion.tool, claim=claim)
+                op = cx.record_absence(
+                    suspicion.tool, claim=_absence_claim(text, capture, suspicion.action))
                 if op is not None:
                     absence_ops.append(op)
             # OPTIONAL recovery (opt-in), demoted from detector to remediation:
@@ -301,9 +300,8 @@ async def arun(
             bypass_finding = suspicion
             if hasattr(cx, "record_absence"):
                 capture = getattr(getattr(cx, "config", None), "capture_args", False)
-                claim = ((text or "")[:240].strip() if capture
-                         else f"claimed a completed '{suspicion.action}' action")
-                op = cx.record_absence(suspicion.tool, claim=claim)
+                op = cx.record_absence(
+                    suspicion.tool, claim=_absence_claim(text, capture, suspicion.action))
                 if op is not None:
                     absence_ops.append(op)
             if bypass in ("recover", "strict"):  # opt-in remediation

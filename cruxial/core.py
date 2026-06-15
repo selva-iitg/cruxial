@@ -20,6 +20,7 @@ from typing import Any, Callable, Mapping
 
 from cruxial import __version__
 from cruxial.actions import ActionRegistry, default_action_registry
+from cruxial.bypass import BypassSuspicion, detect_bypass
 from cruxial.classifier import unknown_tool
 from cruxial.errors import CruxialError
 from cruxial.ledger import Ledger, StateResolver, new_op_id
@@ -224,6 +225,15 @@ def guard(
             stacklevel=2,
         )
         return NoopCruxial()
+
+
+def _absence_claim(text: str | None, capture_args: bool, action: str) -> str:
+    """The 'Said' recorded for a bypass: the verbatim model text when
+    capture_args is on, else a non-PII structured claim. Shared by run() and
+    Cruxial.check_bypass() so the two paths never drift."""
+    if capture_args:
+        return (text or "")[:240].strip()
+    return f"claimed a completed '{action}' action"
 
 
 class Cruxial:
@@ -730,6 +740,49 @@ class Cruxial:
         self.record_bypass(tool)
         return op
 
+    def check_bypass(
+        self,
+        assistant_text: str | None,
+        *,
+        tool_calls_this_turn: Any = (),
+        tool_names: Any = None,
+        called_tools: Any = (),
+        side_effecting: Any = None,
+        descriptions: dict[str, str] | None = None,
+    ) -> BypassSuspicion | None:
+        """Detect a claimed-but-never-called action AND record it as `unknown`.
+
+        The safe, one-call equivalent of ``detect_bypass()`` + ``record_absence()``
+        that ``run()`` performs internally — use it when you own the agent loop
+        (streaming, a framework's tool callback, a custom orchestrator). On a turn
+        that emitted NO tool call, pass the assistant's text. If it claims a
+        completed side-effecting action that was never called, this records the
+        deterministic absence and returns the ``BypassSuspicion``; otherwise None.
+
+        ``tool_names`` defaults to this guard's registered tools; ``called_tools``
+        is every tool called so far in the conversation (so a claim already
+        satisfied by a real call is NOT flagged). Fail-open: never raises.
+        """
+        try:
+            names = list(tool_names) if tool_names is not None else list(self.schemas)
+            suspicion = detect_bypass(
+                assistant_text,
+                tool_calls_this_turn=tool_calls_this_turn,
+                tool_names=names,
+                called_tools=called_tools,
+                side_effecting=side_effecting,
+                descriptions=descriptions,
+            )
+            if suspicion is None:
+                return None
+            claim = _absence_claim(
+                assistant_text, getattr(self.config, "capture_args", False), suspicion.action
+            )
+            self.record_absence(suspicion.tool, claim=claim)
+            return suspicion
+        except Exception:
+            return None  # fail-open: a guard helper must never break the host
+
     def close(self) -> None:
         try:
             self.sink.close()
@@ -834,6 +887,9 @@ class NoopCruxial:
         return ""
 
     def record_absence(self, tool: str, claim: str | None = None) -> None:
+        return None
+
+    def check_bypass(self, assistant_text: str | None, **kwargs: Any) -> None:
         return None
 
     def close(self) -> None:
