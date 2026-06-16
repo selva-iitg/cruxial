@@ -56,8 +56,8 @@ class RunResult:
         text:       The assistant's natural-language text this turn, if any.
         tool_calls: One entry per tool call this turn:
                     {name, args, ok, value, failure, repaired, state, op_id}.
-        finished:   True when the model returned no tool calls (and no recovery
-                    re-emitted one) — your cue to stop the outer loop.
+        finished:   True when the model returned no tool calls — your cue to
+                    stop the outer loop.
         bypass:     A BypassSuspicion when the model claimed an action in prose
                     but emitted no matching call this turn — DETECTED
                     deterministically (the receipt's absence is the oracle, not
@@ -104,7 +104,8 @@ def run(
     tools: list[dict[str, Any]],
     executors: Mapping[str, Callable[..., Any]],
     repair: bool = True,
-    bypass: str = "on",
+    bypass: str = "on",          # "on" = detect + record `unknown`; "off" = skip
+
     side_effecting: list[str] | None = None,
     provider: str = "auto",
     guard: Cruxial | None = None,
@@ -137,11 +138,12 @@ def run(
     new_messages = list(messages)
     new_messages.append(assistant_msg)
 
-    # 3. No tool calls → candidate final reply. Before declaring done, check
-    #    for tool_bypass: did the text CLAIM an action it never called? If a
-    #    local (zero-cost) pre-filter flags it, give the model ONE neutral
-    #    re-prompt. If it re-emits the call → real bypass, correct it. If it
-    #    declines → not a bypass, return the reply unchanged (check invisible).
+    # 3. No tool calls → candidate final reply. Before declaring done, check for
+    #    tool_bypass: did the text CLAIM a completed action it never called? A
+    #    local, zero-cost pre-filter flags it and we record it DETERMINISTICALLY
+    #    as `unknown` — the receipt's absence is the oracle. We never re-prompt
+    #    the model to confirm (a confident model just re-affirms the false claim);
+    #    remediation is the caller's policy, applied to the `unknown` signal.
     bypass_finding: BypassSuspicion | None = None
     absence_ops: list[Any] = []
     if not calls:
@@ -157,9 +159,6 @@ def run(
                 descriptions=descs,
             )
         if suspicion is not None:
-            # DETERMINISTIC: a claimed completion with no matching call → unknown.
-            # The receipt's absence is the oracle — NOT a model re-prompt (a
-            # confident model just re-affirms the false claim).
             bypass_finding = suspicion
             if hasattr(cx, "record_absence"):
                 capture = getattr(getattr(cx, "config", None), "capture_args", False)
@@ -167,16 +166,6 @@ def run(
                     suspicion.tool, claim=_absence_claim(text, capture, suspicion.action))
                 if op is not None:
                     absence_ops.append(op)
-            # OPTIONAL recovery (opt-in), demoted from detector to remediation:
-            #   "recover" → one neutral re-prompt; "strict" → judge then forced emit.
-            if bypass in ("recover", "strict"):
-                corrected = _attempt_correction(
-                    strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
-                if corrected is not None:
-                    n_assistant, n_calls, n_text = corrected
-                    assistant_msg, calls, text = n_assistant, n_calls, n_text
-                    new_messages = list(messages) + [assistant_msg]
-                    # calls now non-empty → falls through to the execute path below
 
     if not calls:
         return RunResult(
@@ -253,7 +242,8 @@ async def arun(
     tools: list[dict[str, Any]],
     executors: Mapping[str, Callable[..., Any]],
     repair: bool = True,
-    bypass: str = "on",
+    bypass: str = "on",          # "on" = detect + record `unknown`; "off" = skip
+
     side_effecting: list[str] | None = None,
     provider: str = "auto",
     guard: Cruxial | None = None,
@@ -304,13 +294,6 @@ async def arun(
                     suspicion.tool, claim=_absence_claim(text, capture, suspicion.action))
                 if op is not None:
                     absence_ops.append(op)
-            if bypass in ("recover", "strict"):  # opt-in remediation
-                corrected = await _attempt_correction_async(
-                    strat, client, model, new_messages, tools, suspicion, bypass, create_kwargs)
-                if corrected is not None:
-                    n_assistant, n_calls, n_text = corrected
-                    assistant_msg, calls, text = n_assistant, n_calls, n_text
-                    new_messages = list(messages) + [assistant_msg]
 
     if not calls:
         return RunResult(
@@ -406,98 +389,6 @@ def _called_tools(messages: list[Any]) -> set[str]:
                 if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name"):
                     out.add(b["name"])
     return out
-
-
-def _nudge_text(s: BypassSuspicion) -> str:
-    """The NEUTRAL re-prompt. Gives the model a genuine out so a false suspect
-    isn't coerced into a fabricated call — this is the lever on acted-on
-    precision. The idempotency clause ("if already done, do NOT call again")
-    is what stops sycophantic models from re-doing an action attributed to a
-    scheduler / another system / an earlier step."""
-    return (
-        f"You indicated you {s.evidence} (a completed '{s.action}' action), but no "
-        f"call to the `{s.tool}` tool was made in this turn.\n"
-        f"- If you intended to {s.action} and it has NOT actually been performed yet, "
-        f"emit the `{s.tool}` tool call now to carry it out.\n"
-        f"- If the action was already done — by you in an earlier step, by another "
-        f"system, or automatically — or you did not intend to perform it, do NOT call "
-        f"the tool. Calling it again would DUPLICATE the action. Just reply in plain text.\n"
-        f"Only call `{s.tool}` if it genuinely still needs to happen now."
-    )
-
-
-def _judge_prompt(s: BypassSuspicion) -> str:
-    """The 'strict' mode's NO-TOOL judgment. Separating the verdict from the
-    tool removes the reflex that makes sycophantic models re-fire an action
-    that was already done (the gpt-4o failure mode in the eval)."""
-    return (
-        f"You indicated you {s.evidence} (a '{s.action}' action), but no `{s.tool}` "
-        f"tool call was made this turn. Reply with EXACTLY one word:\n"
-        f"  NEEDED — if the `{s.tool}` action genuinely still needs to be performed "
-        f"now by calling the tool, and has not actually happened yet.\n"
-        f"  DONE   — if it was already done (by you earlier, by another system, or "
-        f"automatically) or should not be performed.\n"
-        f"Do not call any tool. Answer NEEDED or DONE only."
-    )
-
-
-def _attempt_correction(strat, client, model, ctx_messages, tools, suspicion, mode, kwargs):
-    """Run the correction for a suspected bypass. Returns (assistant_msg, calls,
-    text) if the model CONFIRMS by emitting the call, else None (a denial).
-
-      - "on"     → one neutral re-prompt (tool offered). Cheapest; the re-prompt
-                   is both detector-of-record and corrector.
-      - "strict" → a no-tool judgment first (DONE/NEEDED); only on NEEDED do we
-                   force the emit. +1 call on a confirmed bypass, but immune to
-                   reflexive re-firing.
-    """
-    if mode == "strict":
-        try:
-            needed = strat.judge_needed(client, model, ctx_messages, _judge_prompt(suspicion), kwargs)
-        except Exception:
-            return None
-        if not needed:
-            return None
-        try:
-            n_assistant, n_calls, n_text = strat.forced_emit(
-                client, model, ctx_messages, tools, suspicion.tool, kwargs)
-        except Exception:
-            return None
-        return (n_assistant, n_calls, n_text) if n_calls else None
-
-    # default "on" — single neutral re-prompt with the tool available
-    nudge = {"role": "user", "content": _nudge_text(suspicion)}
-    try:
-        nresp = strat.create(client, model, ctx_messages + [nudge], tools, kwargs)
-        n_assistant, n_calls, n_text = strat.parse(nresp)
-    except Exception:
-        return None
-    return (n_assistant, n_calls, n_text) if n_calls else None
-
-
-async def _attempt_correction_async(strat, client, model, ctx_messages, tools, suspicion, mode, kwargs):
-    """Async twin of _attempt_correction — awaits the model round-trips."""
-    if mode == "strict":
-        try:
-            needed = await strat.ajudge_needed(client, model, ctx_messages, _judge_prompt(suspicion), kwargs)
-        except Exception:
-            return None
-        if not needed:
-            return None
-        try:
-            n_assistant, n_calls, n_text = await strat.aforced_emit(
-                client, model, ctx_messages, tools, suspicion.tool, kwargs)
-        except Exception:
-            return None
-        return (n_assistant, n_calls, n_text) if n_calls else None
-
-    nudge = {"role": "user", "content": _nudge_text(suspicion)}
-    try:
-        nresp = await strat.acreate(client, model, ctx_messages + [nudge], tools, kwargs)
-        n_assistant, n_calls, n_text = strat.parse(nresp)
-    except Exception:
-        return None
-    return (n_assistant, n_calls, n_text) if n_calls else None
 
 
 # ─── internal outcome record ──────────────────────────────────────────────
@@ -611,14 +502,10 @@ class _Strategy:
     def tool_result_msgs(self, outcomes): raise NotImplementedError
     def repair(self, client, model, messages, tools, outcomes, kwargs): raise NotImplementedError
     def apply_correction(self, assistant_msg, call_id, new_args): pass  # rewrite persisted args
-    def judge_needed(self, client, model, messages, prompt, kwargs): raise NotImplementedError
-    def forced_emit(self, client, model, messages, tools, tool_name, kwargs): raise NotImplementedError
 
     # async twins (used by arun) — same shapes, awaited client calls
     async def acreate(self, client, model, messages, tools, kwargs): raise NotImplementedError
     async def arepair(self, client, model, messages, tools, outcomes, kwargs): raise NotImplementedError
-    async def ajudge_needed(self, client, model, messages, prompt, kwargs): raise NotImplementedError
-    async def aforced_emit(self, client, model, messages, tools, tool_name, kwargs): raise NotImplementedError
 
 
 class _OpenAIStrategy(_Strategy):
@@ -668,20 +555,6 @@ class _OpenAIStrategy(_Strategy):
                 tc["function"]["arguments"] = json.dumps(new_args)
                 return
 
-    def judge_needed(self, client, model, messages, prompt, kwargs):
-        resp = client.chat.completions.create(
-            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kwargs)
-        txt = (resp.choices[0].message.content or "").upper()
-        return "NEEDED" in txt  # default ambiguous → DONE (don't act; precision-first)
-
-    def forced_emit(self, client, model, messages, tools, tool_name, kwargs):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=list(messages) + [{"role": "user",
-                "content": f"Call the `{tool_name}` tool now with the appropriate arguments."}],
-            tools=tools, tool_choice={"type": "function", "function": {"name": tool_name}}, **kwargs)
-        return self.parse(resp)
-
     def repair(self, client, model, messages, tools, outcomes, kwargs):
         from cruxial.adapters.openai import auto_repair_batch
         payload = [
@@ -698,19 +571,6 @@ class _OpenAIStrategy(_Strategy):
     async def acreate(self, client, model, messages, tools, kwargs):
         return await client.chat.completions.create(
             model=model, messages=messages, tools=tools, **kwargs)
-
-    async def ajudge_needed(self, client, model, messages, prompt, kwargs):
-        resp = await client.chat.completions.create(
-            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kwargs)
-        return "NEEDED" in (resp.choices[0].message.content or "").upper()
-
-    async def aforced_emit(self, client, model, messages, tools, tool_name, kwargs):
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=list(messages) + [{"role": "user",
-                "content": f"Call the `{tool_name}` tool now with the appropriate arguments."}],
-            tools=tools, tool_choice={"type": "function", "function": {"name": tool_name}}, **kwargs)
-        return self.parse(resp)
 
     async def arepair(self, client, model, messages, tools, outcomes, kwargs):
         from cruxial.adapters.openai import auto_repair_batch_async
@@ -766,23 +626,6 @@ class _AnthropicStrategy(_Strategy):
             if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") == call_id:
                 b["input"] = new_args
                 return
-
-    def judge_needed(self, client, model, messages, prompt, kwargs):
-        kw = dict(kwargs); kw.setdefault("max_tokens", 256)
-        resp = client.messages.create(
-            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kw)
-        txt = "".join(getattr(b, "text", "") for b in (getattr(resp, "content", []) or [])
-                      if getattr(b, "type", None) == "text").upper()
-        return "NEEDED" in txt
-
-    def forced_emit(self, client, model, messages, tools, tool_name, kwargs):
-        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
-        resp = client.messages.create(
-            model=model,
-            messages=list(messages) + [{"role": "user",
-                "content": f"Call the {tool_name} tool now with the appropriate arguments."}],
-            tools=tools, tool_choice={"type": "tool", "name": tool_name}, **kw)
-        return self.parse(resp)
 
     def tool_result_msgs(self, outcomes):
         # Anthropic: a single user turn carrying one tool_result block per call.
@@ -856,23 +699,6 @@ class _AnthropicStrategy(_Strategy):
     async def acreate(self, client, model, messages, tools, kwargs):
         kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
         return await client.messages.create(model=model, messages=messages, tools=tools, **kw)
-
-    async def ajudge_needed(self, client, model, messages, prompt, kwargs):
-        kw = dict(kwargs); kw.setdefault("max_tokens", 256)
-        resp = await client.messages.create(
-            model=model, messages=list(messages) + [{"role": "user", "content": prompt}], **kw)
-        txt = "".join(getattr(b, "text", "") for b in (getattr(resp, "content", []) or [])
-                      if getattr(b, "type", None) == "text").upper()
-        return "NEEDED" in txt
-
-    async def aforced_emit(self, client, model, messages, tools, tool_name, kwargs):
-        kw = dict(kwargs); kw.setdefault("max_tokens", 1024)
-        resp = await client.messages.create(
-            model=model,
-            messages=list(messages) + [{"role": "user",
-                "content": f"Call the {tool_name} tool now with the appropriate arguments."}],
-            tools=tools, tool_choice={"type": "tool", "name": tool_name}, **kw)
-        return self.parse(resp)
 
     async def arepair(self, client, model, messages, tools, outcomes, kwargs):
         built = self._build_repair(messages, outcomes)

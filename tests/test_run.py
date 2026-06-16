@@ -176,23 +176,6 @@ def test_openai_intercept_no_repair_surfaces_failure():
 # ─── tests: tool_bypass (claim-without-call) ────────────────────────────────
 
 
-def test_bypass_recover_corrects():
-    # bypass="recover" = deterministic detect + the opt-in re-prompt remediation
-    # (the old "on" behaviour, now opt-in).
-    ex, sent = _executors()
-    client = FakeOpenAI([
-        _oai_text("I've sent the email to a@b.com."),                  # claim, no call
-        _oai_toolcall({"to": "a@b.com", "subject": "hi", "body": "yo"}),  # re-prompt → re-emits
-    ])
-    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "email a@b.com"}],
-            tools=OPENAI_TOOLS, executors=ex, bypass="recover", config=NULL)
-    assert r.bypass is not None and r.bypass.tool == "send_email"
-    assert r.finished is False           # the corrected call means the turn isn't done
-    assert sent == ["a@b.com"]            # the tool actually ran after correction
-    assert r.stats["bypass"] == 1
-    assert len(client.calls) == 2         # original + one neutral re-prompt
-
-
 def test_bypass_default_on_records_unknown_without_reprompt():
     # THE v0.5 FLIP: default "on" detects deterministically and records the
     # action as UNKNOWN — no re-prompt (a confident model just re-affirms the
@@ -208,13 +191,13 @@ def test_bypass_default_on_records_unknown_without_reprompt():
     assert len(client.calls) == 1                # deterministic — zero extra model calls
 
 
-def test_bypass_off_skips_the_reprompt():
+def test_bypass_off_skips_detection():
     ex, sent = _executors()
     client = FakeOpenAI([_oai_text("I've sent the email.")])
     r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "x"}],
             tools=OPENAI_TOOLS, executors=ex, bypass="off", config=NULL)
     assert r.bypass is None and r.finished is True
-    assert len(client.calls) == 1         # no extra call when disabled
+    assert len(client.calls) == 1         # no detection, no extra call when disabled
 
 
 def test_benign_final_reply_costs_no_extra_call():
@@ -224,37 +207,6 @@ def test_benign_final_reply_costs_no_extra_call():
             tools=OPENAI_TOOLS, executors=ex, config=NULL)
     assert r.bypass is None and r.finished is True
     assert len(client.calls) == 1         # not suspect → zero overhead
-
-
-def test_strict_bypass_confirmed_judges_then_forces_emit():
-    ex, sent = _executors()
-    client = FakeOpenAI([
-        _oai_text("I've sent the email to a@b.com."),                    # claim, no call
-        _oai_text("NEEDED"),                                             # no-tool judgment
-        _oai_toolcall({"to": "a@b.com", "subject": "hi", "body": "yo"}),  # forced emit
-    ])
-    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "email a@b.com"}],
-            tools=OPENAI_TOOLS, executors=ex, bypass="strict", config=NULL)
-    assert r.bypass is not None
-    assert sent == ["a@b.com"]
-    assert len(client.calls) == 3        # turn + judgment + forced emit
-
-
-def test_strict_judged_done_still_records_unknown():
-    # Even in strict mode, detection is deterministic: a claimed completion with
-    # no call anywhere in the trace is recorded UNKNOWN. The judge's "DONE" only
-    # governs RECOVERY (no forced emit) — it no longer suppresses the finding.
-    ex, sent = _executors()
-    client = FakeOpenAI([
-        _oai_text("I already sent the email earlier today."),            # claim, no call in trace
-        _oai_text("DONE"),                                               # judgment → already done
-    ])
-    r = run(client, model="gpt-4o", messages=[{"role": "user", "content": "status?"}],
-            tools=OPENAI_TOOLS, executors=ex, bypass="strict", config=NULL)
-    assert r.bypass is not None                  # detected + recorded
-    assert r.state("send_email") == "unknown"
-    assert sent == []                    # judge said DONE → no forced emit, no duplicate
-    assert len(client.calls) == 2        # turn + judgment, NO forced emit
 
 
 def test_bypass_not_flagged_when_tool_was_called_earlier():

@@ -109,8 +109,9 @@ cruxial view     # confirmed vs silent-failure (unknown) counts + per-op receipt
 
 > **Upgrading from 0.4:** the action layer is additive — existing `guard()`/`run()` code is
 > unchanged until you mark a tool `@action`. One breaking change: `run(bypass="on")` now
-> *detects deterministically* instead of re-prompting the model; pass `bypass="recover"` for
-> the old auto-correcting behaviour. See the [CHANGELOG](CHANGELOG.md).
+> *detects deterministically* and records the action as `unknown` instead of re-prompting the
+> model (the old re-prompt remediation has been removed — what to do about an `unknown` is your
+> policy). See the [CHANGELOG](CHANGELOG.md).
 
 ## Or: one call does the whole turn
 
@@ -213,16 +214,17 @@ to the assistant (not *"you"* / *"the scheduler"* / *"automatically"*), for a
 side-effecting tool that was never called — and that no tool which actually ran
 already satisfies. By default (`bypass="on"`) the flagged action is recorded
 **deterministically as `unknown`**, zero extra model calls — the receipt's
-absence is the oracle, not the model's say-so. (Opt into remediation with
-`bypass="recover"`, one neutral re-prompt, or `bypass="strict"`.) Own your loop
-instead of `run()`? `cx.check_bypass(text, called_tools=...)` does the same
-detect-and-record.
+absence is the oracle, not the model's say-so. Cruxial never re-prompts the
+model to confirm; what to do about an `unknown` (retry, escalate, human-review)
+is your policy, applied to a deterministic signal. Own your loop instead of
+`run()`? `cx.check_bypass(text, called_tools=...)` does the same detect-and-record.
 
-Benchmarked on a 132-scenario adversarial set ([BENCHMARKS.md](BENCHMARKS.md)):
-**0 false actions**, acted-on precision **100%** (sonnet-4-6 and gpt-4o), 100% correction
-recall *on that set*. It's precision-first — it fires on completion-form verbs, so terse
-claims ("Done.", "Email's out.") are a documented recall gap: a high-quality net, not a
-complete guarantee. `bypass="off"` disables it; `bypass="strict"` is a 2-call variant.
+Precision-first by design: the local pre-filter fires on completion-form verbs
+with conservative attribution/negation guards (a 132-scenario adversarial set is
+in [BENCHMARKS.md](BENCHMARKS.md)), so terse claims ("Done.", "Email's out.") are
+a documented recall gap — a high-quality net, not a complete guarantee. The
+durable guarantee is the **receipt**, not the prose read. `bypass="off"` disables
+detection entirely.
 
 ## Auto-repair
 

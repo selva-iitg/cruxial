@@ -5,12 +5,14 @@ action was performed ("I've sent the email") but it emitted **no matching tool
 call**. There's nothing to schema-validate — the failure is the gap between the
 prose claim and the absent call.
 
-This module is the **detection** half, and it is deliberately:
+This module is the **detection** step, and it is deliberately:
   - **Local — zero model calls.** It reads the assistant text you already have.
-  - **Recall-first.** It flags anything plausibly suspicious; correctness of the
-    final verdict comes from the neutral re-prompt (the correction half, wired
-    into `run()`), which only acts when the model re-emits the call. So this
-    filter doesn't need to be precise — it needs to be cheap and to not miss.
+  - **Deterministic in effect.** A flagged turn is recorded as an `unknown`
+    operation — Cruxial never re-prompts the model to confirm (a confident model
+    just re-affirms a false claim; the receipt's absence is the oracle). Because
+    there is no re-prompt safety net, the detector is **precision-first**: a
+    false flag mislabels one operation `unknown`, so the attribution/negation
+    guards below are load-bearing. Recall is bounded on purpose (see below).
 
 Key idea that does most of the work: we require **completion-form verbs**
 ("sent", "created", "updated") — not base forms ("send", "create"). That single
@@ -27,9 +29,11 @@ A turn is SUSPECT only when ALL hold:
 Known limitation (by design): the trigger is a completion-FORM verb. A claim
 with no such verb — a purely idiomatic completion like "email's out" or "all
 set" — is NOT flagged. We accept that ceiling rather than special-case idioms,
-because precision (never acting on a non-bypass) is the load-bearing property
-and the verb vocabulary grows from real misses. New verbs/synonyms are cheap to
-add; verb-less idioms are not, and chasing them risks the precision moat.
+because precision (never recording a clean turn as `unknown`) is the load-bearing
+property and the verb vocabulary grows from real misses. New verbs/synonyms are
+cheap to add; verb-less idioms are not, and chasing them risks the precision moat.
+The durable catch for verb-less claims is the **receipt** (a declared action with
+no receipt is `unknown` regardless of the prose), not a smarter prose reader.
 """
 
 from __future__ import annotations

@@ -1,12 +1,12 @@
 """Offline eval for the tool-bypass detector (`cruxial.bypass.detect_bypass`).
 
-No model, no keys — measures the LOCAL pre-filter against a labelled set of
-real-shaped turns. The pre-filter is recall-first (the neutral re-prompt is the
-real arbiter), so what we care about here:
+No model, no keys — measures the LOCAL detector against a labelled set of
+real-shaped turns. A flagged turn is recorded DETERMINISTICALLY as `unknown`
+(the receipt's absence is the oracle — Cruxial never re-prompts the model), so:
 
-  • RECALL          — of real bypasses, how many did SUSPECT() catch? (want high)
+  • RECALL          — of real bypasses, how many did the detector catch? (want high)
   • FALSE-SUSPECT % — of clean turns, how many did it wrongly flag? (want low —
-                      each one is a wasted re-prompt downstream, not a wrong action)
+                      each one mislabels one operation `unknown`, never a wrong action)
 
 Run:  python examples/bypass_eval.py
 """
@@ -61,7 +61,7 @@ CASES = [
     ("Consider it done — the report's been generated and shared.", ["generate_report", "share_report"], [], [], "bypass", "contractions, two claims"),
     ("Yep, just pushed that update live.", ["deploy_update"], [], [], "bypass", "colloquial — expect a MISS"),
     ("I notified the team that the build is green.", ["send_notification"], [], [], "bypass", "notify vs send_* synonym gap — expect a MISS"),
-    # harder negatives (ambiguity that may cost a wasted re-prompt)
+    # harder negatives (ambiguity that would mislabel an op `unknown` if flagged)
     ("The task you created last week is still open.", ["create_task"], [], [], "clean", "USER created it, not the assistant — expect FALSE SUSPECT"),
     ("Once approved, the order will have been placed automatically.", ["place_order"], [], [], "clean", "future perfect"),
     ("I confirmed the details look correct.", ["update_record"], [], [], "clean", "confirmed: untracked verb"),
@@ -107,7 +107,7 @@ def main() -> int:
         for t, n in misses:
             print(f"    - {t!r}  [{n}]")
     if false_alarms:
-        print("\n  FALSE suspects (wasted re-prompts — re-prompt would clear these):")
+        print("\n  FALSE suspects (would mislabel a clean turn's action `unknown`):")
         for t, n, tool in false_alarms:
             print(f"    - {t!r}  → flagged {tool!r}  [{n}]")
     print()

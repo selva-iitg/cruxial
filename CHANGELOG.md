@@ -2,6 +2,21 @@
 
 All notable changes to Cruxial are documented here. Format: [Keep a Changelog](https://keepachangelog.com); versioning: [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+- **`cx.check_bypass(text, ...)`** — detect a claimed-but-never-called action **and** record it as `unknown` in one call, for when you own the loop (streaming, a framework's tool callback, a worker). The safe equivalent of what `run()` does internally — the bare `detect_bypass()` detects but doesn't record.
+
+### Changed
+- **`run(bypass=...)` is now `"on" | "off"` only.** A flagged claim is recorded **deterministically as `unknown`**; what to do about it (retry / escalate / human-review) is the caller's policy.
+
+### Removed
+- **The re-prompt bypass remediation (`bypass="recover"` / `"strict"`).** Cruxial no longer re-prompts or LLM-judges a flagged claim — the receipt's absence is the oracle, not a re-affirmation. This aligns the bypass catch with the rest of the action layer: deterministic detection, deterministic recording, remediation left to the application. Removed `examples/bypass_live_eval.py` (it benchmarked that path); the offline detector eval `examples/bypass_eval.py` remains.
+
+### Fixed
+- **Bypass false positive on sibling tools** — a claim already satisfied by a tool that actually ran (e.g. `send_email` did the send) no longer flags an uncalled sibling (`send_sms`).
+- **`cruxial view --web` served stale data** after the ledger file was replaced — the viewer now opens a fresh reader per request instead of holding one connection.
+
 ## [0.5.0] — 2026-06-12
 
 The **action layer** — Cruxial moves from "is the tool call well-formed?" to "**did the action actually happen?**" Mark a side-effecting tool with `@action`, give it a receipt adapter, and every call resolves to a receipt-derived state (`posted` / `failed` / `unknown` / `needs_review`) in an append-only **ledger**. Only a real receipt advances state, so the model's narrated "done" can never promote an unconfirmed action to done. Additive and fail-open — 0.4 behaviour is unchanged until a tool is instrumented.
