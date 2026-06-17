@@ -703,9 +703,10 @@ class Cruxial:
     def record_bypass(self, tool: str) -> None:
         """Log a tool_bypass interception so `cruxial stats` counts it.
 
-        Called by ``cruxial.run`` when the model claimed an action in prose,
-        emitted no matching call, and confirmed the bypass on a neutral
-        re-prompt (then got corrected). Fail-open like all telemetry.
+        Called by ``record_absence`` when the model claimed an action in prose
+        but emitted no matching tool call. The catch is deterministic — the
+        receipt's absence is the oracle; nothing is re-prompted or repaired.
+        Fail-open like all telemetry.
         """
         failure = Failure(
             category="tool_bypass",
@@ -719,7 +720,7 @@ class Cruxial:
             args={},
             latency_ns=time.perf_counter_ns(),
             schema_hash=self._schema_hashes.get(tool, "-"),
-            repaired=True,
+            repaired=False,  # a deterministic absence catch is not an auto-repair
         )
 
     def record_absence(self, tool: str, claim: str | None = None) -> Operation:
