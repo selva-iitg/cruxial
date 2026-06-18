@@ -104,8 +104,11 @@ A claimed-but-never-called action is caught **deterministically** — recorded a
 with no extra model call (the default). Then see what your agents actually did:
 
 ```bash
-cruxial view     # confirmed vs silent-failure (unknown) counts + per-op receipt trace
+cruxial view           # terminal ledger
+cruxial view --web     # the dashboard below — confirmed vs silent-failure (unknown), per-op receipts
 ```
+
+![cruxial view --web — the action ledger: 3 of 19 agent actions couldn't be confirmed (silent failures), shown next to receipt-backed posted ops, per-tool validator coverage, and the receipt/actor for every operation](assets/cruxial-dashboard.png)
 
 > **Upgrading from 0.4:** the action layer is additive — existing `guard()`/`run()` code is
 > unchanged until you mark a tool `@action`. One breaking change: `run(bypass="on")` now
