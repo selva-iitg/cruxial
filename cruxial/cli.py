@@ -410,7 +410,9 @@ def cmd_demo() -> int:
         if not res.ok and res.failure:
             caught += 1
             print(red(f"  ✗ {category:<21} ") + dim("→ blocked before execution"))
-            print(dim(f"      {_ellipsize(res.failure.message)}"))
+            # Keep the excerpt narrow so the demo fits a wide font in the hero
+            # GIF — the constraint message's filler value is the long part.
+            print(dim(f"      {_ellipsize(res.failure.message, 72)}"))
         else:  # pragma: no cover
             print(f"  ? {category:<20} not caught (unexpected)")
 

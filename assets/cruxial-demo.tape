@@ -6,9 +6,9 @@
 Output assets/cruxial-demo.gif
 
 Set Shell "bash"
-Set FontSize 16
+Set FontSize 19
 Set Width 1080
-Set Height 1200
+Set Height 1300
 Set Padding 24
 
 # Invisible setup: activate the venv + a clean prompt, then clear.
