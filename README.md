@@ -28,49 +28,42 @@ cruxial demo
 
 ![cruxial demo catching every failure category offline, then showing the repair prompt](https://raw.githubusercontent.com/cruxial-ai/cruxial/main/assets/cruxial-demo.gif)
 
-## 30-second demo
+## Two ways to use it — same guarantees
+
+Pick by how much of the loop you want to own. Both paths validate every tool
+call, auto-repair bad args, read the receipt, and record every action to the
+same local ledger:
+
+- **`cruxial.run()`** drives one model turn for you — call the model, validate,
+  execute, auto-repair in one round-trip, record. The drop-in below.
+- **`guard()`** keeps the loop yours — for streaming, a framework that owns the
+  model call (LangGraph, CrewAI, an Assistants/Responses runtime), or a worker
+  dispatching a single call. You call `.execute()` / `.check_bypass()` yourself
+  ([Own your loop](#own-your-loop--guard)).
+
+## Quickstart — `cruxial.run()`
 
 ```python
-import json
-from cruxial import guard
-from openai import OpenAI
+import cruxial
 
-client = OpenAI()
+result = cruxial.run(
+    client,                 # your OpenAI / AzureOpenAI / Anthropic client, or litellm.completion
+    model="gpt-4o",
+    messages=messages,
+    tools=tools,            # the same tool defs you already pass the LLM
+    executors=executors,    # {tool_name: your_function}
+)
 
-# Standard OpenAI tool definitions
-schemas = {
-    "send_email": {
-        "type": "object",
-        "properties": {
-            "to": {"type": "string", "format": "email"},
-            "subject": {"type": "string", "maxLength": 200},
-            "body": {"type": "string"},
-        },
-        "required": ["to", "subject", "body"],
-    }
-}
+while not result.finished:  # your loop stays yours — one model call per turn
+    result = cruxial.run(client, model="gpt-4o", messages=result.messages,
+                         tools=tools, executors=executors)
 
-# Your actual executors
-def send_email(to, subject, body):
-    return mailer.send(to=to, subject=subject, body=body)
-
-executors = {"send_email": send_email}
-
-# Wrap once
-cruxial = guard(schemas=schemas, executors=executors)
-
-# In your agent loop:
-for tool_call in llm_response.tool_calls:
-    args = json.loads(tool_call.arguments)   # OpenAI returns arguments as a JSON string
-    result = cruxial.execute(tool_call.name, args)
-
-    if not result.ok:
-        # result.failure.category says why (e.g. "type_mismatch"); for an executor
-        # error the raw exception is on result.error.
-        result.raise_on_failure()        # raises the right typed error either way
-
-    use(result.value)
+print(result.text)          # the model's final answer
 ```
+
+It reuses your configured client (Azure endpoint, `base_url`, timeouts all preserved),
+derives schemas from `tools`, and fails open. Deliberately **one turn, not a framework** —
+no streaming, no multi-turn ownership, you decide when to stop.
 
 ## The action layer — did it actually happen?
 
@@ -116,72 +109,45 @@ cruxial view --web     # the dashboard below — confirmed vs silent-failure (un
 > model (the old re-prompt remediation has been removed — what to do about an `unknown` is your
 > policy). See the [CHANGELOG](CHANGELOG.md).
 
-## Or: one call does the whole turn
+## Own your loop — `guard()`
 
-`guard()` gives you full control. If you write the usual raw-SDK loop, `cruxial.run()`
-does the entire tool step in one call: it calls the model, validates every tool call,
-executes the valid ones, auto-repairs the bad ones in one round-trip, then logs and
-appends the results. Works with OpenAI, Azure, Anthropic, and LiteLLM. You keep your loop:
-
-```python
-import cruxial
-
-result = cruxial.run(
-    client,                 # your OpenAI / AzureOpenAI / Anthropic client, or litellm.completion
-    model="gpt-4o",
-    messages=messages,
-    tools=tools,            # the same tool defs you already pass the LLM
-    executors=executors,    # {tool_name: your_function}
-)
-
-while not result.finished:  # your loop stays yours — one model call per turn
-    result = cruxial.run(client, model="gpt-4o", messages=result.messages,
-                         tools=tools, executors=executors)
-
-print(result.text)          # the model's final answer
-```
-
-It reuses your configured client (Azure endpoint, `base_url`, timeouts all preserved),
-derives schemas from `tools`, and fails open. Deliberately **one turn, not a framework** —
-no streaming, no multi-turn ownership, you decide when to stop. Need to own execution?
-Drop to `guard().check()` / `.execute()`.
-
-**Async?** Use `await cruxial.arun(...)` with an `AsyncOpenAI` / async client, and
-`await guard().aexecute(...)` for async tool executors — same contract, everything awaited.
-
-## Own your loop
-
-`cruxial.run()` is the easy path when Cruxial drives the turn — but the loop isn't
-always yours to hand over. You might be **streaming** tokens, inside a framework
-that owns the model call (LangGraph, CrewAI, an Assistants/Responses runtime), or
-dispatching a single tool call in a worker. Then use the two primitives `run()` is
-built on:
+Can't hand the turn to `run()` — streaming, a framework that owns the model call,
+a worker dispatching one tool? Wrap your registry once and call the two primitives
+`run()` is built on. They land the **same** ledger:
 
 ```python
-cx = guard(schemas=schemas, executors=executors)
+import json
+from cruxial import guard
 
-# 1. Every tool call your loop executes → validate, run, get the receipt + state.
-result = cx.execute(name, args)        # records the operation automatically
-if result.state == "needs_review":     # a verify HALT — surface it, don't blind-retry
-    ...
+cx = guard(schemas=schemas, executors=executors)    # the same tool defs you pass the LLM
 
-# 2. A turn with NO tool call whose TEXT claims an action → detect AND record it:
+for tool_call in llm_response.tool_calls:
+    args = json.loads(tool_call.arguments)           # OpenAI returns arguments as a JSON string
+    result = cx.execute(tool_call.name, args)        # validate → run → receipt → record
+    if not result.ok:
+        result.raise_on_failure()                    # typed error (category on result.failure)
+    if result.state == "needs_review":               # a verify HALT — surface it, don't blind-retry
+        ...
+    use(result.value)
+
+# A text-only turn that CLAIMS an action but emitted no call → detect AND record it:
 if not tool_calls_this_turn:
     cx.check_bypass(assistant_text, called_tools=tools_called_so_far)
-    # records the "said done, never did it" as an `unknown` op → shows in `cruxial view`
 ```
 
-`cx.execute()` already records the full operation (receipt-derived `state`), so the
-healthy path **and** the called-but-no-proof failure are covered for free. The one
-line not to skip is **`cx.check_bypass()`** on text-only turns — the safe, fused
-detect-and-record. (The bare `cruxial.bypass.detect_bypass()` *detects* but does
-not record, which silently drops the catch.) Anything `cruxial.run()` lands in the
-ledger, these two calls land yourself.
+`cx.execute()` records the full operation (receipt-derived `state`), so the healthy
+path **and** the called-but-no-proof failure are covered for free. The one line not to
+skip is **`cx.check_bypass()`** on text-only turns — the safe, fused detect-and-record.
+(The bare `cruxial.bypass.detect_bypass()` *detects* but doesn't record, silently
+dropping the catch.)
 
-**See it run:** `python examples/action_layer.py` shows both `execute()` and
-`run()` offline (no key); [`examples/run_vs_own_loop.py`](examples/run_vs_own_loop.py)
-puts both wirings through a live model and prints a parity table — identical
-ledger either way, so the choice is ergonomic, not a safety trade-off.
+**Async?** `await cruxial.arun(...)` and `await cx.aexecute(...)` — same contract,
+everything awaited.
+
+**See it run:** `python examples/action_layer.py` shows both `execute()` and `run()`
+offline (no key); [`examples/run_vs_own_loop.py`](examples/run_vs_own_loop.py) puts both
+wirings through a live model and prints a parity table — identical ledger either way, so
+the choice is ergonomic, not a safety trade-off.
 
 ## What it catches
 
