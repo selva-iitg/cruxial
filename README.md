@@ -282,22 +282,25 @@ sequenceDiagram
     participant M as LLM model
     participant C as Cruxial guard
     participant T as Your tool / executor
-    participant DB as Local SQLite telemetry
+    participant L as Local action ledger
 
     M->>C: tool call (name, args)
     C->>C: validate args vs JSON Schema
     alt args valid
-        C->>DB: record PASSED (hashes only)
         C->>T: run tool
-        T-->>M: result
+        T-->>C: result (+ receipt for an @action)
+        C->>C: resolve state from the receipt
+        C->>L: record operation — posted | unknown | needs_review | failed
+        C-->>M: receipt-derived state — never a bare "done"
     else args invalid
-        C->>DB: record INTERCEPTED + failure category
+        C->>L: record intercepted + failure category (hashes only)
         opt auto-repair enabled
             C-->>M: repair prompt (1-shot retry)
             M->>C: corrected tool call
         end
         C-->>M: typed failure (caller decides what to do)
     end
+    Note over M,C: model claims an action but emits NO call → recorded as unknown (the silent-failure catch)
 ```
 
 Cruxial wraps the **tool registry**, not the LLM client. No monkey-patching,
