@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cruxial.svg?label=pypi&color=blue)](https://pypi.org/project/cruxial/)
 [![Python](https://img.shields.io/pypi/pyversions/cruxial.svg)](https://pypi.org/project/cruxial/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Socket](https://badge.socket.dev/pypi/package/cruxial/0.2.0?artifact_id=tar-gz)](https://socket.dev/pypi/package/cruxial)
+[![Socket](https://badge.socket.dev/pypi/package/cruxial/0.5.0?artifact_id=tar-gz)](https://socket.dev/pypi/package/cruxial)
 
 **The reliability layer for LLM tool calls.**
 
@@ -175,6 +175,11 @@ detect-and-record. (The bare `cruxial.bypass.detect_bypass()` *detects* but does
 not record, which silently drops the catch.) Anything `cruxial.run()` lands in the
 ledger, these two calls land yourself.
 
+**See it run:** `python examples/action_layer.py` shows both `execute()` and
+`run()` offline (no key); [`examples/run_vs_own_loop.py`](examples/run_vs_own_loop.py)
+puts both wirings through a live model and prints a parity table — identical
+ledger either way, so the choice is ergonomic, not a safety trade-off.
+
 ## What it catches
 
 Eight failure categories. Every interception is logged with the failure
@@ -212,12 +217,10 @@ if result.bypass:        # the model claimed an action it never called → recor
 *only* when it claims a completed action (`"sent"`, not `"send"`), attributed
 to the assistant (not *"you"* / *"the scheduler"* / *"automatically"*), for a
 side-effecting tool that was never called — and that no tool which actually ran
-already satisfies. By default (`bypass="on"`) the flagged action is recorded
-**deterministically as `unknown`**, zero extra model calls — the receipt's
-absence is the oracle, not the model's say-so. Cruxial never re-prompts the
-model to confirm; what to do about an `unknown` (retry, escalate, human-review)
-is your policy, applied to a deterministic signal. Own your loop instead of
-`run()`? `cx.check_bypass(text, called_tools=...)` does the same detect-and-record.
+already satisfies. As with the action layer above, the flag is recorded
+**deterministically as `unknown`** with no extra model call — the receipt's
+absence is the oracle. Owning your loop instead of `run()`?
+`cx.check_bypass(text, called_tools=...)` records the same catch.
 
 Precision-first by design: the local pre-filter fires on completion-form verbs
 with conservative attribution/negation guards (a 132-scenario adversarial set is
@@ -390,7 +393,7 @@ run(client, model="gpt-4o", messages=msgs,
 Nested models and enums (Pydantic's `$defs`/`$ref`) validate end to end. The
 adapter is lazy and optional — cruxial's core never requires Pydantic.
 
-## What ships today (v0.4)
+## What ships today (v0.5)
 
 - ✅ Python SDK
 - ✅ OpenAI + **Azure OpenAI** + Anthropic + LiteLLM (auto via normalization)
@@ -401,7 +404,10 @@ adapter is lazy and optional — cruxial's core never requires Pydantic.
 - ✅ `cruxial stats` CLI
 - ✅ Fail-open by default
 - ✅ `cruxial.run()` — one managed turn (OpenAI / Azure / Anthropic / LiteLLM)
-- ✅ **`tool_bypass` detection** — the claimed-but-never-called catch
+- ✅ **The action layer** — `@action` / `@receipt` / `@verify` resolve every call to `posted` / `unknown` / `needs_review` / `failed` from the receipt, never the model's word
+- ✅ **`tool_bypass` detection** — the claimed-but-never-called catch, recorded deterministically as `unknown`
+- ✅ **`cruxial view`** — local action ledger (`--web` dashboard) of what your agents actually did
+- ✅ **`cx.check_bypass()`** — the fused detect-and-record primitive for when you own the loop
 - ✅ **Pydantic adapter** — define tools as Pydantic models (`cruxial[pydantic]`)
 
 Coming:
