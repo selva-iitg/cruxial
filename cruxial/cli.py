@@ -47,6 +47,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Run a 5-second offline interception demo (no API key needed).",
     )
 
+    p_view = sub.add_parser(
+        "view", help="Show the action ledger — what your agent actually did (receipts/states)."
+    )
+    p_view.add_argument("op_id", nargs="?", default=None, help="show the full trace for one operation")
+    p_view.add_argument("--db", type=Path, default=None, help="path to telemetry.sqlite (see `stats --db`).")
+    p_view.add_argument("--limit", type=int, default=20, help="recent operations to list (default: 20)")
+    p_view.add_argument("--web", action="store_true", help="open a live local web dashboard (127.0.0.1 only)")
+    p_view.add_argument("--port", type=int, default=7878, help="port for --web (default: 7878)")
+
     p_diag = sub.add_parser("diagnostic", help="Print version + environment info for bug reports.")
 
     args = parser.parse_args(argv)
@@ -55,6 +64,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_stats(args.db, args.since)
     if args.cmd == "demo":
         return cmd_demo()
+    if args.cmd == "view":
+        return cmd_view(args.db, args.op_id, args.limit, args.web, args.port)
     if args.cmd == "diagnostic":
         return cmd_diagnostic()
     parser.print_help()
@@ -211,6 +222,126 @@ def cmd_stats(db_path: Path | None, since: str) -> int:
     return 0
 
 
+_STATE_GLYPH = {
+    "posted": "posted ✓", "sent": "sent ✓", "queued": "queued",
+    "failed": "failed ✗", "needs_review": "needs review ⚠",
+    "unknown": "unknown ✗", "pending": "pending",
+}
+
+
+def cmd_view(
+    db_path: Path | None, op_id: str | None, limit: int,
+    web: bool = False, port: int = 7878,
+) -> int:
+    """The action ledger — what your agent actually DID (receipt-derived states),
+    the full intent → receipt trace for one operation, or a live web dashboard."""
+    if db_path is None:
+        db_path = default_db_path()
+    if not db_path.exists():
+        _err(
+            f"no telemetry database at {db_path}\n"
+            "  run a guarded app with @cruxial.action tools at least once, then try again.\n"
+            "  or try:  cruxial demo   ·   override with --db <path> / CRUXIAL_DB_PATH."
+        )
+        return 1
+
+    if web:
+        from cruxial.webview import serve
+        return serve(db_path, port)
+
+    from cruxial.ledger import Ledger
+
+    sink = SqliteSink(db_path)
+    led = Ledger(sink)
+    bold = lambda t: _ansi(t, "1")
+    dim = lambda t: _ansi(t, "2")
+    green = lambda t: _ansi(t, "32")
+    red = lambda t: _ansi(t, "31")
+    yellow = lambda t: _ansi(t, "33")
+
+    # single-operation trace card
+    if op_id is not None:
+        op = led.get(op_id)
+        if op is None:
+            _err(f"no operation {op_id!r} in {db_path}")
+            sink.close()
+            return 1
+        rid = op.receipt.id if (op.receipt and op.receipt.id) else "—"
+        pol = (op.policy or {}).get("decision") or "—"
+        print(bold(f"\ncruxial · operation {op.op_id}"))
+        print("─" * 52)
+        print(f"  tool       {op.tool}")
+        print(f"  state      {_state_text(op.state, green, red, yellow)}")
+        print(f"  actor      {op.actor or '—'}")
+        print(f"  intent     {op.ts_intent}")
+        print(f"  resolved   {op.ts_resolved or '—'}")
+        print(f"  policy     {pol}")
+        print(f"  receipt    {rid}")
+        if op.note:
+            print(f"  note       {dim(op.note)}")
+        print(f"\n  db: {db_path}")
+        sink.close()
+        return 0
+
+    counts = led.state_counts()
+    print(bold("\ncruxial · action ledger"))
+    print("─" * 52)
+    if not counts:
+        print("  no operations recorded yet.")
+        print(dim("  mark a side-effecting tool with @cruxial.action and run your app,"))
+        print(dim("  or try:  cruxial demo"))
+        print(f"\n  db: {db_path}")
+        sink.close()
+        return 0
+
+    total = sum(counts.values())
+    posted = counts.get("posted", 0) + counts.get("sent", 0) + counts.get("queued", 0)
+    unknown = counts.get("unknown", 0)
+    review = counts.get("needs_review", 0)
+    failed = counts.get("failed", 0)
+
+    print(f"  operations            {total:>6,}")
+    print(green(f"  confirmed (receipt)   {posted:>6,}"))
+    if unknown:
+        print(red(f"  ⚠ silent failures     {unknown:>6,}") + dim("  (claimed/expected, NO receipt)"))
+    if review:
+        print(yellow(f"  needs review          {review:>6,}"))
+    if failed:
+        print(f"  failed                {failed:>6,}")
+
+    prot = led.protection()
+    if prot:
+        print(bold("\n  protection"))
+        for p in prot:
+            if not p["is_action"]:
+                print(f"    {p['tool']:<22} {dim('read-only')}")
+            else:
+                rc = green("receipt") if p["has_receipt"] else yellow("no adapter")
+                n = p["verify_count"]
+                labels = p.get("verify_labels") or []
+                if labels:
+                    checks = ", ".join(labels)
+                elif n:
+                    checks = f"{n} check" + ("" if n == 1 else "s")
+                else:
+                    checks = dim("none")
+                print(f"    {p['tool']:<22} action · {rc} · {checks}")
+
+    print(bold("\n  recent operations"))
+    print(dim(f"    {'op_id':<16} {'tool':<18} {'state':<15} {'receipt':<14} when"))
+    for op in led.recent(limit):
+        rid = op.receipt.id if (op.receipt and op.receipt.id) else "—"
+        print(
+            f"    {op.op_id:<16} {op.tool[:17]:<18} "
+            f"{_state_glyph(op.state):<15} {str(rid)[:13]:<14} {_ago(op.ts_intent)}"
+        )
+
+    print(dim("\n  → cruxial view <op_id>  for the full intent → receipt trace"))
+    print(f"  db: {db_path}")
+    sink.close()
+    return 0
+
+
 def cmd_demo() -> int:
     """Run an offline interception demo — no API key, no network, no telemetry written.
 
@@ -279,7 +410,9 @@ def cmd_demo() -> int:
         if not res.ok and res.failure:
             caught += 1
             print(red(f"  ✗ {category:<21} ") + dim("→ blocked before execution"))
-            print(dim(f"      {_ellipsize(res.failure.message)}"))
+            # Keep the excerpt narrow so the demo fits a wide font in the hero
+            # GIF — the constraint message's filler value is the long part.
+            print(dim(f"      {_ellipsize(res.failure.message, 72)}"))
         else:  # pragma: no cover
             print(f"  ? {category:<20} not caught (unexpected)")
 
@@ -306,12 +439,45 @@ def cmd_demo() -> int:
             if len(lines) > 5:
                 print(dim(f"      │ … (+{len(lines) - 5} more lines — full schema + args sent to the model)"))
 
+    # 5. The action layer — does the model's "done" actually mean done?
+    from cruxial.actions import ActionRegistry
+    from cruxial.receipts import ReceiptRegistry, id_field
+
+    print()
+    print(cyan("  the action layer — \"done\" is a claim until there's a receipt:"))
+
+    ar = ActionRegistry()
+    ar.mark_action("send_email")
+    rr = ReceiptRegistry()
+    rr.register("send_email", id_field("message_id", kind="email"))
+    cx_ok = guard(
+        {"send_email": {"type": "object"}},
+        {"send_email": lambda **k: {"message_id": "m_8f21"}},
+        config=GuardConfig(sinks=("null",), ledger=False),
+        receipt_registry=rr, action_registry=ar,
+    )
+    r_ok = cx_ok.execute("send_email", {"to": "a@b.com"})
+    print(green("  ✓ send_email + receipt   ") + dim(f"→ {r_ok.state}  (receipt id {r_ok.receipt.id})"))
+
+    ar2 = ActionRegistry()
+    ar2.mark_action("send_email")
+    cx_no = guard(
+        {"send_email": {"type": "object"}},
+        {"send_email": lambda **k: {"queued": True}},  # it ran, but returned no proof
+        config=GuardConfig(sinks=("null",), ledger=False),
+        receipt_registry=ReceiptRegistry(), action_registry=ar2,
+    )
+    r_no = cx_no.execute("send_email", {"to": "a@b.com"})
+    print(red("  ✗ send_email, no receipt ") + dim(f"→ {r_no.state.upper()}  — the agent 'did' it, nothing proves it"))
+
     print()
     print("─" * 60)
     print(bold(f"  {caught}/{total - 1} violation types caught") + dim("  · 1 valid call passed · 0 telemetry rows written"))
     print()
     print("  next steps:")
     print(dim("    • wire your real tools:   ") + "guard(schemas=..., executors=...)")
+    print(dim("    • mark side-effects:      ") + "@cruxial.action  +  cruxial.receipt(...)")
+    print(dim("    • see what agents DID:    ") + "cruxial view")
     print(dim("    • see your live rate:     ") + "cruxial stats")
     print(dim("    • full guide:             ") + "https://github.com/cruxial-ai/cruxial#readme")
     print()
@@ -377,6 +543,40 @@ def _parse_since(s: str) -> str | None:
         sys.exit(2)
     delta = timedelta(**{units[s[-1]]: n})
     return (datetime.now(timezone.utc) - delta).isoformat(timespec="milliseconds")
+
+
+def _state_glyph(state: str | None) -> str:
+    return _STATE_GLYPH.get(state, state or "unknown")
+
+
+def _state_text(state, green, red, yellow) -> str:
+    g = _state_glyph(state)
+    if state in ("posted", "sent", "queued"):
+        return green(g)
+    if state in ("unknown", "failed"):
+        return red(g)
+    if state == "needs_review":
+        return yellow(g)
+    return g
+
+
+def _ago(iso_ts: str | None) -> str:
+    if not iso_ts:
+        return "—"
+    try:
+        t = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return iso_ts
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    s = int((datetime.now(timezone.utc) - t).total_seconds())
+    if s < 60:
+        return f"{s}s ago"
+    if s < 3600:
+        return f"{s // 60}m ago"
+    if s < 86400:
+        return f"{s // 3600}h ago"
+    return f"{s // 86400}d ago"
 
 
 def _print_header(since: str) -> None:

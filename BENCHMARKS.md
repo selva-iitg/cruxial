@@ -418,28 +418,23 @@ Put together with section A's 4.7–7.0% on the full real MCP corpus and section
 
 ## F. Tool-bypass · the claimed-but-never-called catch
 
-The failure mode validators structurally cannot catch: the model writes "I've sent the email" and emits **no** tool call. `cruxial.run()` flags it locally (completion-form verb, attributed to the assistant, side-effecting tool never called), then issues ONE neutral re-prompt. We act **only** on a model-confirmed re-emission — so a false flag never fabricates an action.
+The failure mode validators structurally cannot catch: the model writes "I've sent the email" and emits **no** tool call. `cruxial.run()` flags it locally — a completion-form verb ("sent", not "send"), attributed to the assistant (not *you* / a *scheduler* / *automation*), for a side-effecting tool that was never called and that no tool which actually ran already satisfies — and records it **deterministically as `unknown`** with zero extra model calls. Cruxial never re-prompts the model to confirm (a confident model just re-affirms the false claim); the receipt's absence is the oracle. There is no "acting" on the flag, so a false suspect can never fabricate a side effect — at worst it mislabels one operation `unknown`.
 
-**Adversarial set:** 132 hand-built scenarios — 60 real bypasses (varied tools, terse/passive/contraction phrasings) + 72 false suspects, including deliberate sycophancy traps (action attributed to *you*, a *scheduler*, *automation*, or a third-party *person*). The local filter suppresses 48 of the false suspects for free (never reach a re-prompt); the rest exercise the re-prompt.
+So the only thing to measure is the local detector's quality: does it catch real claims (recall) without flagging clean turns (false-suspect rate)? Offline, on a labelled set of real-shaped turns (`examples/bypass_eval.py`):
 
-| Model | Correction recall | **Acted-on precision** | False actions |
-|---|---|---|---|
-| Anthropic claude-sonnet-4-6 | **100%** (60/60) · 95% CI 94–100 | **100.0%** (60/60) · 95% CI 94–100 | **0** |
-| Azure gpt-4o | **100%** (60/60) · 95% CI 94–100 | **100%** (60/60) · 95% CI 94–100 | **0** |
+| | Result |
+|---|---|
+| Recall (real bypasses caught) | **15/15 = 100%** |
+| False-suspect rate (clean → flagged) | **0/16 = 0%** |
 
-- **Correction recall** = of real bypasses, how many the re-prompt recovered (the model re-emitted and it executed).
-- **Acted-on precision** = of the calls we *acted on*, how many were true bypasses. This is the safety number — a false action means a fabricated/duplicated side effect.
-- Earlier builds had one gpt-4o false action — a third-party-**person** attribution ("my colleague already created the ticket"). 0.2.1's subject guard now suppresses it (0 false actions on the current build). The honest residual has moved from *precision* to *recall*: the local filter fires on completion-**form** verbs, so terse/idiomatic completions ("Done.", "Email's out.") won't fire — see the limitations note.
+The honest residual is *recall*, not precision: the filter fires on completion-**form** verbs with conservative attribution/negation guards, so terse/idiomatic completions ("Done.", "Email's out.", "All set 👍") won't fire — see the limitations note. The durable guarantee for those is the **receipt** (a declared action with no receipt is `unknown` regardless of the prose), not a smarter prose read.
 
-**Cost:** zero extra model calls on a normal turn (correct agents call the tool, so completion claims are backed → not flagged). One extra call only on a flagged suspect.
+**Cost:** zero extra model calls, ever — detection is a local string scan over text you already have.
 
 **Reproduce**
 
 ```bash
-export AZURE_OPENAI_API_KEY=...  AZURE_OPENAI_ENDPOINT=...  AZURE_OPENAI_DEPLOYMENT=gpt-4o
-export ANTHROPIC_API_KEY=sk-ant-...
-python examples/bypass_eval.py        # offline: the local detector (no keys, no cost)
-python examples/bypass_live_eval.py   # live: acted-on precision + recall, both providers
+python examples/bypass_eval.py        # offline: detector recall + false-suspect rate (no keys, no cost)
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 The sync execute() must refuse an async executor loudly (not silently no-op);
 aexecute() awaits it. arun() drives the full managed turn against an async
-client — execute, repair, and bypass correction — all awaited.
+client — execute, repair, and bypass detection — all awaited.
 """
 from __future__ import annotations
 
@@ -155,16 +155,17 @@ async def test_arun_repairs_invalid_call():
     assert client.chat.completions.n == 2  # original call + one repair round-trip
 
 
-async def test_arun_bypass_correction_async():
+async def test_arun_bypass_records_unknown_deterministically():
     async def send_email(to, subject, body):
         return "sent"
     claim = _text_resp("I've sent the email to the team.")   # claims action, no call
-    confirm = _tc_resp("send_email", GOOD)                   # re-prompt → emits the call
-    client = FakeAsyncOpenAI([claim, confirm])
+    client = FakeAsyncOpenAI([claim])
     res = await arun(client, model="gpt-4o", messages=[{"role": "user", "content": "send the email"}],
-                     tools=TOOLS, executors={"send_email": send_email}, bypass="on", config=_NULL)
+                     tools=TOOLS, executors={"send_email": send_email}, config=_NULL)
     assert res.bypass is not None and res.bypass.tool == "send_email"
-    assert res.tool_calls and res.tool_calls[0]["ok"]
+    assert res.state("send_email") == "unknown"   # surfaced, never re-prompted
+    assert res.finished is True
+    assert client.chat.completions.n == 1         # deterministic — zero extra model calls
 
 
 async def test_arun_streaming_raises():

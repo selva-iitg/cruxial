@@ -22,7 +22,23 @@ FailureCategory = Literal[
     "unknown_tool",
     "tool_bypass",  # model claimed an action in prose but emitted no matching tool call
     "executor_error",  # the user's executor itself raised (raw exception at .error)
+    "absent_receipt",  # an action was claimed/expected but the executor produced no receipt
 ]
+
+# v0.5 — the action layer. Lifecycle state of one operation in the ledger,
+# resolved from the executor RECEIPT, never from the model's narration.
+OpState = Literal[
+    "posted",        # side effect confirmed by a receipt
+    "sent",          # alias of posted for comms tools (email / slack / …)
+    "queued",        # accepted into a queue, not yet confirmed delivered
+    "failed",        # executor returned a not-ok receipt
+    "pending",       # intent logged, not yet resolved
+    "needs_review",  # a verify hook returned HALT
+    "unknown",       # claimed / expected but NO receipt — the absence catch
+]
+
+# Verdict from a per-tool verify hook (cruxial.actions): pass | flag | halt.
+Verdict = Literal["pass", "flag", "halt"]
 
 
 @dataclass(slots=True)
@@ -89,6 +105,13 @@ class ExecutionResult:
     repaired: bool = False
     # If repair was attempted, the corrected args that actually ran.
     repaired_args: dict[str, Any] | None = None
+    # v0.5 — the action layer (all default None; 0.4 callers unaffected).
+    # `receipt` is the executor's proof the side effect happened; `state` is the
+    # ledger lifecycle state resolved from it; `op_id` links to the ledger row.
+    receipt: "Receipt | None" = None
+    state: "OpState | None" = None
+    op_id: str | None = None
+    operation: "Operation | None" = None  # the full ledger row, when finalized
 
     def __post_init__(self) -> None:
         # Contract: a not-ok result ALWAYS carries a Failure. Executor exceptions
@@ -151,3 +174,50 @@ class InterceptionRecord:
     schema_origin: str = "model_visible"
     # Extra context for cloud sink; not used locally.
     extras: dict[str, Any] = field(default_factory=dict)
+
+
+# ─── v0.5: the action layer (receipts + the ledger envelope) ──────────────────
+
+
+@dataclass(slots=True)
+class Receipt:
+    """Proof from the EXECUTOR (not the model) that a side effect actually
+    happened. Produced by a per-tool adapter (``cruxial.receipts``); the default
+    adapter treats a null/empty return as NOT ok — "non-explicit success is not
+    success". The state resolver never advances to posted/sent without ok=True,
+    so a model's narrated "done" can never promote an unknown to done.
+    """
+
+    ok: bool
+    id: str | None = None  # the evidence handle: provider message-id, row id, exit code…
+    status: Any = None  # raw provider status (250, 200, "committed"…)
+    evidence: dict[str, Any] | None = None  # structured proof (webhook state, etag, url…)
+    kind: str = "generic"  # which adapter produced it
+
+
+@dataclass(slots=True)
+class Operation:
+    """One row of the action ledger — the universal ENVELOPE.
+
+    Append-only; the agent can never write it. ``requested`` is hashed in
+    telemetry unless ``capture_args`` is on. Completion is derived from
+    ``receipt`` / ``state``, never from the model's narration — "refusing to let
+    prose advance the state machine". The per-tool proof lives in ``receipt``;
+    everything else here is the same shape for every tool.
+    """
+
+    op_id: str
+    tool: str
+    state: OpState
+    ts_intent: str
+    actor: str | None = None
+    target: str | None = None  # resource handle, if the adapter can name one
+    requested: dict[str, Any] | None = None  # the intent (args)
+    policy: dict[str, Any] | None = None  # {"decision","by"} — BYO engine, RECORDED not enforced
+    receipt: Receipt | None = None
+    note: str | None = None  # human-readable resolution note (e.g. the HALT/FLAG reason)
+    # What the MODEL claimed (the "Said" of Said-vs-Did). Structured/non-PII by
+    # default ("claimed a completed 'send' action"); the verbatim prose only when
+    # capture_args is on. None for ops with no narrated claim.
+    claim: str | None = None
+    ts_resolved: str | None = None

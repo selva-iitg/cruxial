@@ -192,3 +192,30 @@ def test_compound_predicate_third_party_subject_not_flagged():
 ])
 def test_compound_predicate_assistant_subject_fires(text, tool):
     assert _flag(text, [tool]) is not None
+
+
+# ─── regression: a claim satisfied by a tool that RAN must not flag a sibling ─
+# Two comms tools share the canonical "send" action. When the real action was
+# performed (send_email called), a generic "sent" claim must NOT be charged to
+# the uncalled sibling (send_sms) as a false silent-failure.
+
+@pytest.mark.parametrize("text,called,sibling", [
+    ("An email update has been sent to alice@example.com.", "send_email", "send_sms"),
+    ("The verification code has been sent to the phone.",   "send_sms",   "send_email"),
+    ("I notified the customer by email.",                   "send_email", "send_sms"),
+])
+def test_claim_covered_by_called_sibling_not_flagged(text, called, sibling):
+    assert _flag(text, ["send_email", "send_sms"], ever=[called]) is None
+
+
+def test_genuine_bypass_still_fires_when_no_sibling_ran():
+    # nothing was called → a "sent" claim is a real bypass against a send tool
+    assert _flag("I've sent the email to alice@example.com.",
+                 ["send_email", "send_sms"], ever=[]) is not None
+
+
+def test_second_action_bypass_still_fires_after_a_real_call():
+    # send_email ran, but the text ALSO claims an uncovered "charge" → still caught
+    sus = _flag("I emailed the receipt and charged the card $40.",
+                ["send_email", "charge_card"], ever=["send_email"])
+    assert sus is not None and sus.tool == "charge_card"

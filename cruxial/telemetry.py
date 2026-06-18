@@ -135,6 +135,20 @@ class StdoutSink:
     ) -> None:
         return  # No-op for stdout — only sqlite persists a registry.
 
+    def append_operation(self, op: Any) -> None:
+        try:
+            line = json.dumps(
+                {"op": op.op_id, "tool": op.tool, "state": op.state,
+                 "receipt_id": getattr(op.receipt, "id", None)},
+                default=str,
+            )
+            print(line, file=self.stream, flush=True)
+        except Exception:
+            pass
+
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        return  # No-op for stdout — only sqlite persists the registry.
+
     def close(self) -> None:
         pass
 
@@ -169,6 +183,37 @@ class SqliteSink:
         first_registered TEXT NOT NULL,
         last_registered TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS operations (
+        op_id TEXT PRIMARY KEY,
+        ts_intent TEXT NOT NULL,
+        ts_resolved TEXT,
+        actor TEXT,
+        tool TEXT NOT NULL,
+        target TEXT,
+        requested_hash TEXT,
+        policy_decision TEXT,
+        policy_by TEXT,
+        state TEXT NOT NULL,
+        receipt_ok INTEGER,
+        receipt_id TEXT,
+        receipt_kind TEXT,
+        note TEXT,
+        claim TEXT,
+        cruxial_version TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_op_tool ON operations(tool);
+    CREATE INDEX IF NOT EXISTS idx_op_state ON operations(state);
+    CREATE INDEX IF NOT EXISTS idx_op_ts ON operations(ts_intent);
+
+    CREATE TABLE IF NOT EXISTS actions (
+        tool TEXT PRIMARY KEY,
+        is_action INTEGER NOT NULL,
+        has_receipt INTEGER NOT NULL,
+        verify_count INTEGER NOT NULL,
+        verify_labels TEXT,
+        updated TEXT NOT NULL
+    );
     """
 
     def __init__(self, path: Path | str | None = None):
@@ -193,6 +238,12 @@ class SqliteSink:
                     "ALTER TABLE interceptions ADD COLUMN "
                     "schema_origin TEXT DEFAULT 'model_visible'"
                 )
+            acols = {row[1] for row in self._conn.execute("PRAGMA table_info(actions)").fetchall()}
+            if acols and "verify_labels" not in acols:
+                self._conn.execute("ALTER TABLE actions ADD COLUMN verify_labels TEXT")
+            ocols = {row[1] for row in self._conn.execute("PRAGMA table_info(operations)").fetchall()}
+            if ocols and "claim" not in ocols:
+                self._conn.execute("ALTER TABLE operations ADD COLUMN claim TEXT")
         except Exception:
             pass  # Fail-open: migration failure must not break boot.
 
@@ -257,6 +308,65 @@ class SqliteSink:
         except Exception:
             pass
 
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        """UPSERT per-tool action-layer protection (is_action / has_receipt /
+        verify_count) so `cruxial view` can show what's guarded. Idempotent."""
+        if not rows:
+            return
+        ts = utc_now()
+        try:
+            with self._lock:
+                for tool, info in rows.items():
+                    self._conn.execute(
+                        """
+                        INSERT INTO actions
+                          (tool, is_action, has_receipt, verify_count, verify_labels, updated)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(tool) DO UPDATE SET
+                            is_action = excluded.is_action,
+                            has_receipt = excluded.has_receipt,
+                            verify_count = excluded.verify_count,
+                            verify_labels = excluded.verify_labels,
+                            updated = excluded.updated
+                        """,
+                        (tool, 1 if info["is_action"] else 0, 1 if info["has_receipt"] else 0,
+                         int(info["verify_count"]), json.dumps(info.get("verify_labels") or []), ts),
+                    )
+                self._conn.commit()
+        except Exception:
+            pass
+
+    def append_operation(self, op: Any) -> None:
+        """Append one resolved Operation to the action ledger. Append-only;
+        privacy-safe (requested args are hashed, never stored raw). Fail-open."""
+        try:
+            from cruxial import __version__
+
+            r = op.receipt
+            policy = op.policy or {}
+            with self._lock:
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO operations
+                      (op_id, ts_intent, ts_resolved, actor, tool, target,
+                       requested_hash, policy_decision, policy_by, state,
+                       receipt_ok, receipt_id, receipt_kind, note, claim, cruxial_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        op.op_id, op.ts_intent, op.ts_resolved, op.actor, op.tool, op.target,
+                        hash_args(op.requested) if op.requested else None,
+                        policy.get("decision"), policy.get("by"), op.state,
+                        (1 if r.ok else 0) if r is not None else None,
+                        r.id if r is not None else None,
+                        r.kind if r is not None else None,
+                        op.note, getattr(op, "claim", None), __version__,
+                    ),
+                )
+                self._conn.commit()
+        except Exception:
+            pass
+
     def query(self, sql: str, params: tuple = ()) -> list[tuple]:
         with self._lock:
             cur = self._conn.execute(sql, params)
@@ -294,6 +404,22 @@ class MultiSink:
             except Exception:
                 pass
 
+    def append_operation(self, op: Any) -> None:
+        for s in self.sinks:
+            try:
+                if hasattr(s, "append_operation"):
+                    s.append_operation(op)
+            except Exception:
+                pass
+
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        for s in self.sinks:
+            try:
+                if hasattr(s, "register_actions"):
+                    s.register_actions(rows)
+            except Exception:
+                pass
+
     def close(self) -> None:
         for s in self.sinks:
             try:
@@ -308,6 +434,8 @@ class NullSink:
     def __init__(self):
         self.records: list[InterceptionRecord] = []
         self.registered: dict[str, str] = {}
+        self.operations: list[Any] = []
+        self.actions: dict[str, dict[str, Any]] = {}
 
     def record(self, r: InterceptionRecord) -> None:
         self.records.append(r)
@@ -318,6 +446,12 @@ class NullSink:
         schema_origin: str = "model_visible",
     ) -> None:
         self.registered.update(tools)
+
+    def append_operation(self, op: Any) -> None:
+        self.operations.append(op)
+
+    def register_actions(self, rows: dict[str, dict[str, Any]]) -> None:
+        self.actions = dict(rows)
 
     def close(self) -> None:
         pass

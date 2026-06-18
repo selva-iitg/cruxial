@@ -5,12 +5,14 @@ action was performed ("I've sent the email") but it emitted **no matching tool
 call**. There's nothing to schema-validate — the failure is the gap between the
 prose claim and the absent call.
 
-This module is the **detection** half, and it is deliberately:
+This module is the **detection** step, and it is deliberately:
   - **Local — zero model calls.** It reads the assistant text you already have.
-  - **Recall-first.** It flags anything plausibly suspicious; correctness of the
-    final verdict comes from the neutral re-prompt (the correction half, wired
-    into `run()`), which only acts when the model re-emits the call. So this
-    filter doesn't need to be precise — it needs to be cheap and to not miss.
+  - **Deterministic in effect.** A flagged turn is recorded as an `unknown`
+    operation — Cruxial never re-prompts the model to confirm (a confident model
+    just re-affirms a false claim; the receipt's absence is the oracle). Because
+    there is no re-prompt safety net, the detector is **precision-first**: a
+    false flag mislabels one operation `unknown`, so the attribution/negation
+    guards below are load-bearing. Recall is bounded on purpose (see below).
 
 Key idea that does most of the work: we require **completion-form verbs**
 ("sent", "created", "updated") — not base forms ("send", "create"). That single
@@ -27,9 +29,11 @@ A turn is SUSPECT only when ALL hold:
 Known limitation (by design): the trigger is a completion-FORM verb. A claim
 with no such verb — a purely idiomatic completion like "email's out" or "all
 set" — is NOT flagged. We accept that ceiling rather than special-case idioms,
-because precision (never acting on a non-bypass) is the load-bearing property
-and the verb vocabulary grows from real misses. New verbs/synonyms are cheap to
-add; verb-less idioms are not, and chasing them risks the precision moat.
+because precision (never recording a clean turn as `unknown`) is the load-bearing
+property and the verb vocabulary grows from real misses. New verbs/synonyms are
+cheap to add; verb-less idioms are not, and chasing them risks the precision moat.
+The durable catch for verb-less claims is the **receipt** (a declared action with
+no receipt is `unknown` regardless of the prose), not a smarter prose reader.
 """
 
 from __future__ import annotations
@@ -334,7 +338,18 @@ def detect_bypass(
 
         called = set(called_tools)
 
-        # 4. A side-effecting tool whose action was claimed but never called.
+        # Actions already satisfied by a tool that ACTUALLY ran (incl. aliases).
+        # A claim of "sent the email" is backed by a real send_email call even
+        # if a sibling comms tool (send_sms) shares the same canonical "send"
+        # action — without this, the sibling gets flagged as a false bypass.
+        covered: set[str] = set()
+        for name in called:
+            for a in _tool_actions(name):
+                covered.add(a)
+                covered |= _ACTION_ALIASES.get(a, frozenset())
+
+        # 4. A side-effecting tool whose action was claimed but never called —
+        #    and whose action no called tool already covers.
         for name in names:
             if name not in se or name in called:
                 continue
@@ -343,6 +358,8 @@ def detect_bypass(
             # communication-cluster alias (notify ≈ send ≈ message), so
             # "notified the team" matches a send_email tool.
             for action in sorted(asserted):
+                if action in covered:
+                    continue  # a tool that ran already satisfies this claim
                 if action in actions or (_ACTION_ALIASES.get(action, frozenset()) & actions):
                     return BypassSuspicion(
                         tool=name,

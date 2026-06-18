@@ -190,24 +190,27 @@ wait for `cruxial[pydantic]` (V0.2) which lets you use Pydantic's
 When the model writes "I sent the email" but emits **no** `tool_calls`, there
 is nothing to schema-validate. `cruxial.run()` catches this: a final text turn
 is flagged by a local, zero-cost filter (completion-form verb, attributed to
-the assistant, side-effecting tool never called), then ONE neutral re-prompt
-decides — the model re-emits the call (corrected + executed) or declines (no
-action). We only act on a model-confirmed re-emission, so a false flag never
-fabricates an action.
+the assistant, side-effecting tool never called, not already satisfied by a tool
+that ran) and recorded **deterministically as `unknown`**. Cruxial never
+re-prompts the model to confirm — the receipt's absence is the oracle, and what
+to do about an `unknown` (retry / escalate / human-review) is your policy. There
+is no "acting" on the flag, so a false suspect can never fabricate a side effect;
+at worst it mislabels one operation `unknown`.
 
-Benchmarked (132 adversarial scenarios): 100% correction recall, acted-on
-precision 100% (Claude sonnet-4-6) / 98.4% (gpt-4o).
+Detector quality is measured offline (`examples/bypass_eval.py`): on a labelled
+set, recall 15/15 and false-suspect rate 0/16.
 
 **Known limits (honest):**
 - Detection is English, heuristic — colloquialisms ("pushed it live") and
   verb-synonym gaps can be missed (recall, not safety).
 - It distinguishes the *assistant* from *you* / a *scheduler* / *automation*,
-  but **cannot** tell a third-party **person** apart ("my colleague sent it") —
-  the lone residual false-action source on sycophantic models.
-- It only works in the `run()` path (it needs the assistant text). The bare
-  `guard().execute()` path can't see the prose, so it can't detect bypass.
-- Disable with `bypass="off"`; `bypass="strict"` is an opt-in 2-call variant
-  (not recommended — empirically worse on sycophantic models).
+  but cannot perfectly tell every third-party **person** apart ("my colleague
+  sent it") — a residual false-suspect source (mislabels an op `unknown`, never
+  a wrong action).
+- It only works in the `run()` path or via `guard().check_bypass()` (both need
+  the assistant text). The bare `guard().execute()` path can't see the prose.
+- The durable catch for verb-less or idiomatic claims is the **receipt**, not a
+  smarter prose reader. Disable detection with `bypass="off"`.
 
 ### 6. Multi-error per call cap at 5
 

@@ -19,8 +19,12 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from cruxial import __version__
+from cruxial.actions import ActionRegistry, default_action_registry
+from cruxial.bypass import BypassSuspicion, detect_bypass
 from cruxial.classifier import unknown_tool
 from cruxial.errors import CruxialError
+from cruxial.ledger import Ledger, StateResolver, new_op_id
+from cruxial.receipts import ReceiptRegistry, default_registry
 from cruxial.repair import build_repair_prompt
 from cruxial.telemetry import (
     MultiSink,
@@ -33,7 +37,7 @@ from cruxial.telemetry import (
     perf_ms_since,
     utc_now,
 )
-from cruxial.types import ExecutionResult, Failure, InterceptionRecord
+from cruxial.types import ExecutionResult, Failure, InterceptionRecord, Operation
 from cruxial.validator import (
     close_open_objects,
     external_refs,
@@ -73,6 +77,14 @@ class GuardConfig:
     # default only the dangerous pseudo-schemes (javascript/data/file/…) are
     # denied; everything else passes.
     uri_schemes: tuple[str, ...] | None = None
+    # v0.5 — the action layer. `receipts` engages the receipt → verify → resolve
+    # → ledger stage; `ledger` controls whether resolved operations are persisted;
+    # `actor` labels the agent/session on each ledger row. The stage only fires
+    # for a tool that is @action / has a receipt adapter / has a verify hook —
+    # so 0.4 behaviour is the exact default until a tool is instrumented.
+    receipts: bool = True
+    ledger: bool = True
+    actor: str | None = None
 
 
 def _check_schemas(schemas: Mapping[str, dict[str, Any]], *, strict: bool) -> None:
@@ -138,6 +150,8 @@ def guard(
     *,
     config: GuardConfig | None = None,
     sink: Sink | None = None,
+    receipt_registry: ReceiptRegistry | None = None,
+    action_registry: ActionRegistry | None = None,
 ) -> "Cruxial":
     """Wrap a tool registry. Returns a Cruxial instance.
 
@@ -199,6 +213,8 @@ def guard(
             executors=dict(executors),
             sink=sink,
             config=cfg,
+            receipt_registry=receipt_registry,
+            action_registry=action_registry,
         )
     except Exception as exc:  # noqa: BLE001 — extend fail-open to construction
         if cfg.strict:
@@ -211,10 +227,22 @@ def guard(
         return NoopCruxial()
 
 
+def _absence_claim(text: str | None, capture_args: bool, action: str) -> str:
+    """The 'Said' recorded for a bypass: the verbatim model text when
+    capture_args is on, else a non-PII structured claim. Shared by run() and
+    Cruxial.check_bypass() so the two paths never drift."""
+    if capture_args:
+        return (text or "")[:240].strip()
+    return f"claimed a completed '{action}' action"
+
+
 class Cruxial:
     """The guarded tool registry. Returned by `guard()`."""
 
-    __slots__ = ("schemas", "executors", "sink", "config", "_schema_hashes")
+    __slots__ = (
+        "schemas", "executors", "sink", "config", "_schema_hashes",
+        "_receipts", "_actions", "_ledger",
+    )
 
     def __init__(
         self,
@@ -222,6 +250,8 @@ class Cruxial:
         executors: dict[str, Callable[..., Any]],
         sink: Sink,
         config: GuardConfig,
+        receipt_registry: ReceiptRegistry | None = None,
+        action_registry: ActionRegistry | None = None,
     ):
         # Opt-in: close open object schemas so hallucinated extra fields are
         # caught even when the author didn't set additionalProperties:false.
@@ -234,6 +264,13 @@ class Cruxial:
         self.executors = executors
         self.sink = sink
         self.config = config
+        # v0.5 action layer. Default to the module-level registries the
+        # @action / @receipt / @verify decorators write to, so the decorator
+        # flow "just works" with a plain guard(); pass explicit registries for
+        # isolation (tests, multiple independent guards).
+        self._receipts = receipt_registry if receipt_registry is not None else default_registry()
+        self._actions = action_registry if action_registry is not None else default_action_registry()
+        self._ledger = Ledger(sink)
         # Precompute schema hashes once (drift detection later).
         self._schema_hashes: dict[str, str] = {
             name: hash_schema(schema) for name, schema in schemas.items()
@@ -247,6 +284,21 @@ class Cruxial:
                     self._schema_hashes,
                     schema_origin=config.schema_origin,
                 )
+        except Exception:
+            pass
+        # Persist the action-layer registry (what's protected) so `cruxial view`
+        # can show which tools are @action / have a receipt adapter / have hooks.
+        try:
+            if hasattr(sink, "register_actions"):
+                sink.register_actions({
+                    name: {
+                        "is_action": self._actions.is_action(name),
+                        "has_receipt": self._receipts.has(name),
+                        "verify_count": self._actions.verify_count(name),
+                        "verify_labels": self._actions.verify_labels(name),
+                    }
+                    for name in self.schemas
+                })
         except Exception:
             pass
 
@@ -281,7 +333,7 @@ class Cruxial:
                 f"Use `await cruxial.aexecute({name!r}, args)` or `cruxial.arun(...)`."
             )
 
-        return self._record_success(name, args, value, start_ns)
+        return self._finalize(name, args, value, start_ns)
 
     async def aexecute(self, name: str, args: dict[str, Any]) -> ExecutionResult:
         """Async twin of `execute()`. Awaits a coroutine-returning (async)
@@ -302,7 +354,7 @@ class Cruxial:
         except BaseException as exc:  # noqa: BLE001
             return self._record_executor_error(name, args, exc, start_ns)
 
-        return self._record_success(name, args, value, start_ns)
+        return await self._afinalize(name, args, value, start_ns)
 
     # ── shared execute internals (sync + async) ──────────────────────────────
 
@@ -357,6 +409,101 @@ class Cruxial:
         )
         return ExecutionResult(
             ok=True, tool=name, value=value, latency_ms=perf_ms_since(start_ns),
+        )
+
+    # ── v0.5: receipt → verify → resolve → ledger (the action layer) ─────────
+
+    def _instrumented(self, name: str) -> bool:
+        """Does this tool engage the action-layer stage? Only if receipts are on
+        AND the tool is @action / has a receipt adapter / has a verify hook —
+        otherwise we take the exact 0.4 success path (no receipt, no ledger row)."""
+        return self.config.receipts and (
+            self._actions.is_action(name)
+            or self._receipts.has(name)
+            or self._actions.has_verify(name)
+        )
+
+    def _finalize(
+        self, name: str, args: dict[str, Any], value: Any, start_ns: int
+    ) -> ExecutionResult:
+        """Sync post-execution stage. Uninstrumented tool → exact 0.4 path.
+        Fully fail-open: any crash in the stage degrades to that same path (the
+        tool's value still returns)."""
+        if not self._instrumented(name):
+            return self._record_success(name, args, value, start_ns)
+        try:
+            latency_ms = perf_ms_since(start_ns)
+            receipt = self._receipts.adapt(name, value)
+            verdict = self._actions.verify(name, args, receipt, latency_ms=latency_ms)
+            return self._emit_operation(name, args, value, receipt, verdict, start_ns)
+        except Exception as exc:  # noqa: BLE001 — never let the stage break the host
+            if not self.config.fail_open:
+                raise
+            warnings.warn(
+                f"cruxial: action-layer stage failed for {name!r} "
+                f"({type(exc).__name__}: {exc}); passing the tool result through.",
+                stacklevel=2,
+            )
+            return self._record_success(name, args, value, start_ns)
+
+    async def _afinalize(
+        self, name: str, args: dict[str, Any], value: Any, start_ns: int
+    ) -> ExecutionResult:
+        """Async twin of `_finalize` — awaits async verify hooks."""
+        if not self._instrumented(name):
+            return self._record_success(name, args, value, start_ns)
+        try:
+            latency_ms = perf_ms_since(start_ns)
+            receipt = self._receipts.adapt(name, value)
+            verdict = await self._actions.averify(name, args, receipt, latency_ms=latency_ms)
+            return self._emit_operation(name, args, value, receipt, verdict, start_ns)
+        except Exception as exc:  # noqa: BLE001
+            if not self.config.fail_open:
+                raise
+            warnings.warn(
+                f"cruxial: action-layer stage failed for {name!r} "
+                f"({type(exc).__name__}: {exc}); passing the tool result through.",
+                stacklevel=2,
+            )
+            return self._record_success(name, args, value, start_ns)
+
+    def _emit_operation(
+        self,
+        name: str,
+        args: dict[str, Any],
+        value: Any,
+        receipt: Any,
+        verdict: Any,
+        start_ns: int,
+    ) -> ExecutionResult:
+        """Resolve state, append the ledger op, record telemetry, return a result
+        carrying receipt/state/op_id. `ok` keeps its 0.4 meaning (the executor ran
+        cleanly); `state` is the new receipt-derived outcome — callers and `run()`
+        act on `state` (posted / failed / unknown / needs_review)."""
+        is_action = self._actions.is_action(name)
+        state = StateResolver.resolve(is_action, receipt, verdict)
+        now = utc_now()
+        op = Operation(
+            op_id=new_op_id(),
+            tool=name,
+            state=state,
+            ts_intent=now,
+            actor=self.config.actor,
+            requested=args or None,
+            receipt=receipt,
+            note=(getattr(verdict, "reason", "") or None),
+            ts_resolved=now,
+        )
+        if self.config.ledger:
+            self._ledger.append(op)
+        self._record(
+            tool=name, status="passed", failure=None, args=args,
+            latency_ns=start_ns, schema_hash=self._schema_hashes.get(name, "-"),
+            repaired=False,
+        )
+        return ExecutionResult(
+            ok=True, tool=name, value=value, receipt=receipt, state=state,
+            op_id=op.op_id, operation=op, latency_ms=perf_ms_since(start_ns),
         )
 
     def check(self, name: str, args: dict[str, Any]) -> ExecutionResult:
@@ -556,9 +703,10 @@ class Cruxial:
     def record_bypass(self, tool: str) -> None:
         """Log a tool_bypass interception so `cruxial stats` counts it.
 
-        Called by ``cruxial.run`` when the model claimed an action in prose,
-        emitted no matching call, and confirmed the bypass on a neutral
-        re-prompt (then got corrected). Fail-open like all telemetry.
+        Called by ``record_absence`` when the model claimed an action in prose
+        but emitted no matching tool call. The catch is deterministic — the
+        receipt's absence is the oracle; nothing is re-prompted or repaired.
+        Fail-open like all telemetry.
         """
         failure = Failure(
             category="tool_bypass",
@@ -572,8 +720,69 @@ class Cruxial:
             args={},
             latency_ns=time.perf_counter_ns(),
             schema_hash=self._schema_hashes.get(tool, "-"),
-            repaired=True,
+            repaired=False,  # a deterministic absence catch is not an auto-repair
         )
+
+    def record_absence(self, tool: str, claim: str | None = None) -> Operation:
+        """A claimed completion with no matching tool call → a deterministic
+        UNKNOWN operation in the ledger (the absence catch — the receipt's
+        absence is the oracle, not a model re-prompt). `claim` is what the model
+        said (the "Said" of Said-vs-Did). Also records the tool_bypass telemetry
+        row. Returns the Operation. Fail-open."""
+        now = utc_now()
+        op = Operation(
+            op_id=new_op_id(), tool=tool, state="unknown", ts_intent=now,
+            actor=self.config.actor, receipt=None,
+            note="claimed completion with no matching tool call", claim=claim,
+            ts_resolved=now,
+        )
+        if self.config.ledger:
+            self._ledger.append(op)
+        self.record_bypass(tool)
+        return op
+
+    def check_bypass(
+        self,
+        assistant_text: str | None,
+        *,
+        tool_calls_this_turn: Any = (),
+        tool_names: Any = None,
+        called_tools: Any = (),
+        side_effecting: Any = None,
+        descriptions: dict[str, str] | None = None,
+    ) -> BypassSuspicion | None:
+        """Detect a claimed-but-never-called action AND record it as `unknown`.
+
+        The safe, one-call equivalent of ``detect_bypass()`` + ``record_absence()``
+        that ``run()`` performs internally — use it when you own the agent loop
+        (streaming, a framework's tool callback, a custom orchestrator). On a turn
+        that emitted NO tool call, pass the assistant's text. If it claims a
+        completed side-effecting action that was never called, this records the
+        deterministic absence and returns the ``BypassSuspicion``; otherwise None.
+
+        ``tool_names`` defaults to this guard's registered tools; ``called_tools``
+        is every tool called so far in the conversation (so a claim already
+        satisfied by a real call is NOT flagged). Fail-open: never raises.
+        """
+        try:
+            names = list(tool_names) if tool_names is not None else list(self.schemas)
+            suspicion = detect_bypass(
+                assistant_text,
+                tool_calls_this_turn=tool_calls_this_turn,
+                tool_names=names,
+                called_tools=called_tools,
+                side_effecting=side_effecting,
+                descriptions=descriptions,
+            )
+            if suspicion is None:
+                return None
+            claim = _absence_claim(
+                assistant_text, getattr(self.config, "capture_args", False), suspicion.action
+            )
+            self.record_absence(suspicion.tool, claim=claim)
+            return suspicion
+        except Exception:
+            return None  # fail-open: a guard helper must never break the host
 
     def close(self) -> None:
         try:
@@ -677,6 +886,12 @@ class NoopCruxial:
 
     def build_repair_prompt(self, failure: Failure, failed_args: dict[str, Any]) -> str:
         return ""
+
+    def record_absence(self, tool: str, claim: str | None = None) -> None:
+        return None
+
+    def check_bypass(self, assistant_text: str | None, **kwargs: Any) -> None:
+        return None
 
     def close(self) -> None:
         pass
