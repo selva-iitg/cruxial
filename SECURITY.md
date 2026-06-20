@@ -7,7 +7,7 @@ have outsized impact, so we take them seriously and respond fast.
 
 | Version | Supported |
 | ------- | --------- |
-| 0.1.x   | ✓         |
+| 0.5.x   | ✓         |
 
 Once a newer minor or major version ships, the previous one continues to receive
 security fixes for **90 days** to give consumers time to upgrade.
