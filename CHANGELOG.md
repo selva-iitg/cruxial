@@ -4,21 +4,7 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
-### Added
-- **`cx.check_bypass(text, ...)`** — detect a claimed-but-never-called action **and** record it as `unknown` in one call, for when you own the loop (streaming, a framework's tool callback, a worker). The safe equivalent of what `run()` does internally — the bare `detect_bypass()` detects but doesn't record.
-
-### Changed
-- **`run(bypass=...)` is now `"on" | "off"` only.** A flagged claim is recorded **deterministically as `unknown`**; what to do about it (retry / escalate / human-review) is the caller's policy.
-
-### Removed
-- **The re-prompt bypass remediation (`bypass="recover"` / `"strict"`).** Cruxial no longer re-prompts or LLM-judges a flagged claim — the receipt's absence is the oracle, not a re-affirmation. This aligns the bypass catch with the rest of the action layer: deterministic detection, deterministic recording, remediation left to the application. Removed `examples/bypass_live_eval.py` (it benchmarked that path); the offline detector eval `examples/bypass_eval.py` remains.
-
-### Fixed
-- **`extra_field` on open schemas no longer crashes the executor.** JSON Schema is open by default, so a hallucinated field could pass validation and then raise an uncaught `TypeError` at the `**args` call. The field is now checked against the executor's signature and blocked cleanly as `extra_field` before the call (auto-repairable, same as a closed-schema catch). Executors declaring `**kwargs` opt into extras and are never blocked; no schema or config change required.
-- **Bypass false positive on sibling tools** — a claim already satisfied by a tool that actually ran (e.g. `send_email` did the send) no longer flags an uncalled sibling (`send_sms`).
-- **`cruxial view --web` served stale data** after the ledger file was replaced — the viewer now opens a fresh reader per request instead of holding one connection.
-
-## [0.5.0] — 2026-06-12
+## [0.5.0] — 2026-06-20
 
 The **action layer** — Cruxial moves from "is the tool call well-formed?" to "**did the action actually happen?**" Mark a side-effecting tool with `@action`, give it a receipt adapter, and every call resolves to a receipt-derived state (`posted` / `failed` / `unknown` / `needs_review`) in an append-only **ledger**. Only a real receipt advances state, so the model's narrated "done" can never promote an unconfirmed action to done. Additive and fail-open — 0.4 behaviour is unchanged until a tool is instrumented.
 
@@ -27,10 +13,19 @@ The **action layer** — Cruxial moves from "is the tool call well-formed?" to "
 - **The action ledger** — every resolved operation (intent → policy → call → receipt → state) is appended to a local `operations` table; privacy-safe (args hashed, never stored raw). Built-in structural verifiers: `receipt_required` (HALT — with a guided hint naming the adapter to add) and `zero_latency` (advisory FLAG). New `Receipt` / `Operation` / `OpState` / `Verdict` types; `ExecutionResult` now carries `receipt` / `state` / `op_id` / `operation`.
 - **`cruxial view`** — a local dashboard over the ledger: confirmed vs **silent-failure** (`unknown`) counts, recent operations, and a single-operation `intent → receipt` trace card. **`cruxial view --web`** opens a live, **zero-dependency** local web dashboard (stdlib http.server, 127.0.0.1 only). `cruxial demo` now shows the action layer (receipt → posted vs no-receipt → unknown).
 - **`RunResult.state(tool)` / `.render()` / `.operations` / `.halted`** — `render()` is receipt-derived and never prints a bare "done"; an unconfirmed action reads as `unknown`. The model's next-turn tool result now carries the receipt status, so it works with the proof, not its own assumption.
+- **`cx.check_bypass(text, ...)`** — detect a claimed-but-never-called action **and** record it as `unknown` in one call, for when you own the loop (streaming, a framework's tool callback, a worker). The safe equivalent of what `run()` does internally; the bare `detect_bypass()` detects but doesn't record.
 - Async parity throughout (`aexecute` / `arun` / async verify hooks).
 
 ### Changed
-- **BREAKING — `run(bypass=...)` default flipped.** A claimed-but-never-called action is now caught **deterministically** (recorded as `unknown`, **no extra model call**) instead of via a model re-prompt — because a confident model just re-affirms the false claim. The old auto-correcting re-prompt is now opt-in: `bypass="recover"` (one neutral re-prompt) or `bypass="strict"` (judge, then forced emit). `RunResult.bypass` now means *detected*, not *re-prompt-confirmed*. `bypass="off"` is unchanged.
+- **BREAKING — bypass detection is deterministic.** A claimed-but-never-called action is caught **deterministically** and recorded as `unknown` (**no extra model call**), because a confident model just re-affirms a false claim. `run(bypass=...)` is `"on" | "off"` only; what to do about a flagged claim (retry / escalate / human-review) is the caller's policy. `RunResult.bypass` means *detected*, not *re-prompt-confirmed*.
+
+### Removed
+- **The re-prompt bypass remediation (`bypass="recover"` / `"strict"`).** Cruxial no longer re-prompts or LLM-judges a flagged claim — the receipt's absence is the oracle, not a re-affirmation. Removed `examples/bypass_live_eval.py` (it benchmarked that path); the offline detector eval `examples/bypass_eval.py` remains.
+
+### Fixed
+- **`extra_field` on open schemas no longer crashes the executor.** JSON Schema is open by default, so a hallucinated field could pass validation and then raise an uncaught `TypeError` at the `**args` call. The field is now checked against the executor's signature and blocked cleanly as `extra_field` before the call (auto-repairable, same as a closed-schema catch). Executors declaring `**kwargs` opt into extras and are never blocked; no schema or config change required.
+- **Bypass false positive on sibling tools** — a claim already satisfied by a tool that actually ran (e.g. `send_email` did the send) no longer flags an uncalled sibling (`send_sms`).
+- **`cruxial view --web` served stale data** after the ledger file was replaced — the viewer now opens a fresh reader per request instead of holding one connection.
 
 ## [0.4.0] — 2026-06-07
 
