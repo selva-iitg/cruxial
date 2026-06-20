@@ -65,7 +65,9 @@ print(result.text)          # the model's final answer
 
 It reuses your configured client (Azure endpoint, `base_url`, timeouts all preserved),
 derives schemas from `tools`, and fails open. Deliberately **one turn, not a framework** —
-no streaming, no multi-turn ownership, you decide when to stop.
+no streaming, no multi-turn ownership, you decide when to stop. `result.operations` and
+`result.state(tool)` reflect the **latest turn**; keep your own list across the loop if you
+want every turn's operations (the full history is always in the ledger — `cruxial view`).
 
 ## The action layer — did it actually happen?
 
@@ -88,7 +90,9 @@ def _(raw):
 
 @cruxial.verify("send_email")            # optional domain check → PASS / FLAG / HALT
 def _(args, receipt):
-    return cruxial.HALT("no message-id") if receipt.id is None else cruxial.PASS
+    # Runs only once a receipt exists — a send with no receipt is already `unknown`.
+    # HALT a real send that needs a human look (here: an external recipient) → needs_review.
+    return cruxial.HALT("external recipient") if not args["to"].endswith("@acme.com") else cruxial.PASS
 
 result = cruxial.run(client, model=m, messages=msgs, tools=tools, executors=ex)
 result.state("send_email")   # → "posted" | "unknown" | "needs_review" | "failed"
@@ -169,6 +173,14 @@ category — never the raw argument values.
 
 The first seven are schema-derivable. **`tool_bypass`** is the one validators
 structurally can't catch — there's no call to validate. See below.
+
+> **`extra_field` on open schemas.** JSON Schema is open by default, so an invented
+> field passes schema validation. Cruxial still catches it: when you execute, the
+> field is checked against the executor's signature and blocked as `extra_field`
+> before it can crash the call — so a hallucinated field is caught either at the
+> schema layer (`additionalProperties: false` / `GuardConfig(strict_properties=True)`)
+> or at the executor boundary. An executor that declares `**kwargs` opts into extras
+> and is never blocked.
 
 ## tool_bypass — catch the action your agent claimed but never took
 
