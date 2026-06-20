@@ -130,8 +130,29 @@ def test_strict_properties_catches_extra_field():
 
 
 def test_strict_properties_off_by_default():
+    # A **kwargs executor opts into extra fields, so an open schema passes them
+    # through even with strict_properties off.
     schema = {"type": "object", "properties": {"to": {"type": "string"}}, "required": ["to"]}
     g = guard(schemas={"send": schema}, executors={"send": lambda **k: "sent"}, config=_NULL)
+    assert g.execute("send", {"to": "a@b.com", "cc": "x"}).ok
+
+
+def test_open_schema_extra_field_caught_by_executor_signature():
+    # Open schema (no additionalProperties) + an executor that can't take the
+    # field → the extra field is caught as extra_field BEFORE the **args splat
+    # crashes, even with strict_properties off (the default).
+    schema = {"type": "object", "properties": {"to": {"type": "string"}}, "required": ["to"]}
+    g = guard(schemas={"send": schema}, executors={"send": lambda to: "sent"}, config=_NULL)
+    r = g.execute("send", {"to": "a@b.com", "cc_everyone": True})
+    assert not r.ok and r.failure.category == "extra_field" and r.failure.path == "cc_everyone"
+    # a valid call on the same guard still runs
+    assert g.execute("send", {"to": "a@b.com"}).ok
+
+
+def test_extra_field_net_exempts_kwargs_executor():
+    # The signature net never blocks an executor that declares **kwargs.
+    schema = {"type": "object", "properties": {"to": {"type": "string"}}, "required": ["to"]}
+    g = guard(schemas={"send": schema}, executors={"send": lambda to, **k: ("sent", k)}, config=_NULL)
     assert g.execute("send", {"to": "a@b.com", "cc": "x"}).ok
 
 

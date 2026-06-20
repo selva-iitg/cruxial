@@ -227,6 +227,28 @@ def guard(
         return NoopCruxial()
 
 
+def _accepted_keywords(fn: Callable[..., Any]) -> frozenset[str] | None:
+    """The parameter names `fn` accepts by keyword, or None if it takes arbitrary
+    keywords (**kwargs) or can't be introspected.
+
+    None means "don't second-guess the call" — the executor opted into extra
+    fields, or it's a builtin/C callable we can't read, so we fail open. Used to
+    catch a hallucinated field an open schema let through *before* the `**args`
+    splat turns it into an uncaught TypeError.
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (ValueError, TypeError):
+        return None
+    names: set[str] = set()
+    for p in params:
+        if p.kind is inspect.Parameter.VAR_KEYWORD:
+            return None  # **kwargs — the executor accepts anything
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+            names.add(p.name)
+    return frozenset(names)
+
+
 def _absence_claim(text: str | None, capture_args: bool, action: str) -> str:
     """The 'Said' recorded for a bypass: the verbatim model text when
     capture_args is on, else a non-PII structured claim. Shared by run() and
@@ -241,7 +263,7 @@ class Cruxial:
 
     __slots__ = (
         "schemas", "executors", "sink", "config", "_schema_hashes",
-        "_receipts", "_actions", "_ledger",
+        "_receipts", "_actions", "_ledger", "_exec_kw",
     )
 
     def __init__(
@@ -262,6 +284,13 @@ class Cruxial:
         _check_schemas(schemas, strict=config.strict)
         self.schemas = schemas
         self.executors = executors
+        # The keywords each executor accepts — the oracle for catching a
+        # hallucinated extra field an open schema let through (None = **kwargs or
+        # un-introspectable → don't block). Computed once; the per-call check is
+        # a set lookup.
+        self._exec_kw: dict[str, frozenset[str] | None] = {
+            name: _accepted_keywords(fn) for name, fn in executors.items()
+        }
         self.sink = sink
         self.config = config
         # v0.5 action layer. Default to the module-level registries the
@@ -387,6 +416,32 @@ class Cruxial:
                 ok=False, tool=name, failure=failure,
                 latency_ms=perf_ms_since(start_ns),
             )
+
+        # Net under the schema layer: JSON Schema is open by default, so a
+        # hallucinated field can pass validation and then crash the `**args`
+        # splat with an uncaught TypeError. The executor's own signature is the
+        # oracle for what it accepts — flag the stray field as extra_field and
+        # block it cleanly, exactly as a closed schema would (so auto-repair and
+        # stats treat the two paths identically).
+        accepted = self._exec_kw.get(name)
+        if accepted is not None:
+            extras = [k for k in args if k not in accepted]
+            if extras:
+                shown = repr(extras[0]) if len(extras) == 1 else ", ".join(map(repr, extras))
+                failure = Failure(
+                    category="extra_field",
+                    tool=name,
+                    message=f"unexpected field {shown} — not a parameter of {name!r}",
+                    path=extras[0],
+                )
+                self._record(
+                    tool=name, status="intercepted", failure=failure, args=args,
+                    latency_ns=start_ns, schema_hash=self._schema_hashes[name], repaired=False,
+                )
+                return ExecutionResult(
+                    ok=False, tool=name, failure=failure,
+                    latency_ms=perf_ms_since(start_ns),
+                )
         return None
 
     def _record_executor_error(

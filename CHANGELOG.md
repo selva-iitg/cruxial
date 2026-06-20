@@ -14,6 +14,7 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 - **The re-prompt bypass remediation (`bypass="recover"` / `"strict"`).** Cruxial no longer re-prompts or LLM-judges a flagged claim — the receipt's absence is the oracle, not a re-affirmation. This aligns the bypass catch with the rest of the action layer: deterministic detection, deterministic recording, remediation left to the application. Removed `examples/bypass_live_eval.py` (it benchmarked that path); the offline detector eval `examples/bypass_eval.py` remains.
 
 ### Fixed
+- **`extra_field` on open schemas no longer crashes the executor.** JSON Schema is open by default, so a hallucinated field could pass validation and then raise an uncaught `TypeError` at the `**args` call. The field is now checked against the executor's signature and blocked cleanly as `extra_field` before the call (auto-repairable, same as a closed-schema catch). Executors declaring `**kwargs` opt into extras and are never blocked; no schema or config change required.
 - **Bypass false positive on sibling tools** — a claim already satisfied by a tool that actually ran (e.g. `send_email` did the send) no longer flags an uncalled sibling (`send_sms`).
 - **`cruxial view --web` served stale data** after the ledger file was replaced — the viewer now opens a fresh reader per request instead of holding one connection.
 
