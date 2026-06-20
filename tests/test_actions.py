@@ -214,15 +214,15 @@ def test_verify_decorator_registers_and_returns_hook():
     reg = default_action_registry()
     reg.clear()
     try:
-        reg.mark_action("send_email")
+        reg.mark_action("issue_refund")
 
-        @verify("send_email")
+        @verify("issue_refund")
         def check(args, receipt):
-            return HALT("no id") if receipt.id is None else PASS
+            return HALT("over policy") if args["amount"] > 1000 else PASS
 
         # registered onto the default registry
-        assert reg.verify("send_email", {}, Receipt(ok=True, id="x", kind="email")).kind == "pass"
+        assert reg.verify("issue_refund", {"amount": 50}, Receipt(ok=True, id="x", kind="refund")).kind == "pass"
         # and still independently callable
-        assert check({}, Receipt(ok=False, kind="generic")).is_halt
+        assert check({"amount": 5000}, Receipt(ok=True, id="x", kind="refund")).is_halt
     finally:
         reg.clear()

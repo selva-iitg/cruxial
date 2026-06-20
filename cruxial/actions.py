@@ -279,9 +279,11 @@ def verify(
 ) -> Callable[[VerifyHook], VerifyHook]:
     """Register a per-tool verify hook (args, receipt) -> verdict.
 
-        @cruxial.verify("send_email")
+        @cruxial.verify("issue_refund", label="refund ≤ $1000")
         def _(args, receipt):
-            return cruxial.HALT("no msg-id") if receipt.id is None else cruxial.PASS
+            # Runs only when a receipt exists (a no-receipt action is already
+            # `unknown`); HALT a domain breach to land it in needs_review.
+            return cruxial.HALT("over policy") if args["amount"] > 1000 else cruxial.PASS
 
     Pass ``label`` to name the rule in the dashboard's Protection view (e.g.
     ``@verify("issue_refund", label="refund ≤ $1000")``); without it, the hook's
