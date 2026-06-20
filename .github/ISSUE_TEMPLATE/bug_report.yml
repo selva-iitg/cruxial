@@ -1,0 +1,60 @@
+name: Bug report
+description: Something Cruxial does wrong, or a tool call it should have caught and didn't.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A minimal repro is worth ten paragraphs.
+        **Security issue?** Don't file here — follow [SECURITY.md](https://github.com/cruxial-ai/cruxial/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did Cruxial do instead?
+      placeholder: I expected the claimed action to resolve as `unknown`, but it was recorded as `posted`...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal repro
+      description: The smallest snippet that reproduces it. Include the tool schema/executor if relevant.
+      render: python
+    validations:
+      required: true
+  - type: input
+    id: cruxial-version
+    attributes:
+      label: Cruxial version
+      description: "`cruxial --version` or `pip show cruxial`"
+      placeholder: 0.5.0
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.11"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Action layer (receipts / verify / ledger)
+        - Schema validation / repair
+        - CLI (stats / demo / view / diagnostic)
+        - Adapter (openai / anthropic / mcp / pydantic)
+        - Telemetry / sink
+        - Other / not sure
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, traceback, or the relevant `cruxial stats` / ledger output.
+    validations:
+      required: false
