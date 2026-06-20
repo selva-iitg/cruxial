@@ -1,0 +1,39 @@
+name: Feature request / idea
+description: Propose new behavior or a change to how Cruxial works.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cruxial stays small and dependency-light on purpose. The best proposals
+        keep that constraint — see [CONTRIBUTING.md](https://github.com/cruxial-ai/cruxial/blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you do today? What's the failure or friction this would remove?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Cruxial do? An API sketch or example call helps.
+      render: python
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried, or other designs you weighed.
+    validations:
+      required: false
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Fits the project's constraints
+      options:
+        - label: Doesn't add a new required runtime dependency (provider SDKs stay optional)
+        - label: Preserves fail-open (Cruxial raising never blocks the host's tool)
+        - label: Doesn't persist raw argument values to telemetry
