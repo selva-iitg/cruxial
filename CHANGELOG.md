@@ -4,6 +4,12 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-06-21
+
+### Security
+- **`cruxial view --web` now defends against DNS rebinding.** The dashboard binds 127.0.0.1, but a malicious web page whose domain resolves to 127.0.0.1 could previously read the ledger over the unauthenticated local API (browser CORS does not stop rebinding). Requests are now rejected (403) unless the `Host` header is a localhost name. A missing `Host` (curl / HTTP 1.0) is still allowed.
+- **Security headers on every dashboard response** as defense-in-depth for rendering agent-controlled data: a strict `Content-Security-Policy` (`default-src 'none'`, `connect-src 'self'` so any XSS can't exfiltrate the ledger to another origin), plus `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer`. The server version banner is also suppressed.
+
 ## [0.5.1] — 2026-06-21
 
 ### Fixed
@@ -106,6 +112,7 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.5.2]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.2
 [0.5.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.1
 [0.5.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.4.0

@@ -16,7 +16,7 @@ from cruxial.core import guard
 from cruxial.ledger import Ledger
 from cruxial.receipts import ReceiptRegistry, id_field
 from cruxial.telemetry import SqliteSink
-from cruxial.webview import _bind, _make_handler, _op_to_dict, _state_payload, _PAGE
+from cruxial.webview import _bind, _host_allowed, _make_handler, _op_to_dict, _state_payload, _PAGE
 
 
 def _ledger_db(tmp_path: Path) -> Path:
@@ -92,6 +92,47 @@ def test_bind_returns_none_when_range_exhausted():
     from http.server import BaseHTTPRequestHandler
     # No candidates to try -> None, so serve() prints a friendly error instead of crashing.
     assert _bind(BaseHTTPRequestHandler, 7878, tries=0) is None
+
+
+def test_host_allowed_unit():
+    # localhost names (any port) pass; a missing Host (non-browser) passes.
+    assert _host_allowed("127.0.0.1:7878")
+    assert _host_allowed("localhost:7878")
+    assert _host_allowed("localhost")
+    assert _host_allowed("[::1]:7878")
+    assert _host_allowed("")
+    # DNS-rebinding hostnames are rejected.
+    assert not _host_allowed("evil.com")
+    assert not _host_allowed("evil.com:7878")
+    assert not _host_allowed("attacker.example:7878")
+
+
+def test_server_blocks_foreign_host_and_sets_security_headers(tmp_path):
+    db = _ledger_db(tmp_path)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(db))
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        base = f"http://127.0.0.1:{port}"
+        # Legit localhost request: 200 + security headers present.
+        resp = urllib.request.urlopen(base + "/api/state", timeout=3)
+        assert resp.status == 200
+        csp = resp.headers.get("Content-Security-Policy")
+        assert csp and "connect-src 'self'" in csp and "default-src 'none'" in csp
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+        assert resp.headers.get("X-Frame-Options") == "DENY"
+
+        # DNS-rebinding style request: a foreign Host header is rejected.
+        req = urllib.request.Request(base + "/api/state", headers={"Host": "evil.com"})
+        try:
+            urllib.request.urlopen(req, timeout=3)
+            assert False, "expected 403 for a foreign Host"
+        except urllib.error.HTTPError as e:
+            assert e.code == 403
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_server_serves_page_and_api(tmp_path):
