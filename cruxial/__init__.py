@@ -1,8 +1,8 @@
-"""Cruxial — the reliability layer for LLM tool calls."""
+"""Cruxial — the action layer for AI agents."""
 
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 from cruxial.core import Cruxial, GuardConfig, NoopCruxial, guard
 from cruxial.run import RunResult, arun, run
