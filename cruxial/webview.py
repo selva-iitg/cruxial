@@ -75,12 +75,58 @@ _EMPTY_STATE = {"db": "", "counts": {"total": 0, "posted": 0, "unknown": 0,
                 "operations": [], "protection": []}
 
 
+# The dashboard is local-only but serves ledger data (tool names, claims, arg
+# hashes) with no auth. Two defenses, since "127.0.0.1 only" is not enough:
+#   - Host allowlist defeats DNS rebinding: a malicious page whose domain resolves
+#     to 127.0.0.1 still sends its own Host header, which we reject. (Browser CORS
+#     does NOT stop rebinding — the request looks same-origin to the browser.)
+#   - Strict CSP + nosniff defang any XSS that slips past esc(): connect-src 'self'
+#     blocks exfiltrating the ledger to another origin; default-src 'none' blocks
+#     loading external scripts/images. The page uses inline script/style/handlers,
+#     so those stay 'unsafe-inline'.
+_ALLOWED_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; base-uri 'none'; img-src 'self' data:; "
+        "style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+        "connect-src 'self'; frame-ancestors 'none'; form-action 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+
+
+def _host_allowed(host_header: str) -> bool:
+    """Defeat DNS rebinding: accept only requests addressed to a localhost name.
+
+    A missing Host is allowed (non-browser clients like curl / HTTP 1.0); a
+    browser always sends one, so a rebinding attacker cannot omit it. The port
+    is irrelevant — the attack is in the hostname (e.g. ``evil.com`` resolving to
+    127.0.0.1), so we compare only the host part against the allowlist.
+    """
+    host = (host_header or "").strip()
+    if not host:
+        return True
+    if host.startswith("["):  # IPv6 literal, e.g. [::1]:7878
+        hostname = host[1:host.index("]")] if "]" in host else host
+    else:
+        hostname = host.rsplit(":", 1)[0] if ":" in host else host
+    return hostname.lower() in _ALLOWED_HOSTNAMES
+
+
 def _make_handler(db_path: Path):
     class Handler(BaseHTTPRequestHandler):
+        server_version = "cruxial"  # don't advertise the Python/BaseHTTPServer version
+        sys_version = ""
+
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            for k, v in _SECURITY_HEADERS.items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
 
@@ -88,6 +134,10 @@ def _make_handler(db_path: Path):
             self._send(code, json.dumps(obj).encode(), "application/json")
 
         def do_GET(self) -> None:  # noqa: N802
+            if not _host_allowed(self.headers.get("Host", "")):
+                # Likely DNS rebinding: a non-localhost Host pointed at us.
+                self._send(403, b"forbidden: unexpected Host", "text/plain; charset=utf-8")
+                return
             path = self.path.split("?")[0]
             if path == "/":
                 self._send(200, _PAGE.encode(), "text/html; charset=utf-8")

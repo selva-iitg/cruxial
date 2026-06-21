@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 from cruxial.core import Cruxial, GuardConfig, NoopCruxial, guard
 from cruxial.run import RunResult, arun, run
