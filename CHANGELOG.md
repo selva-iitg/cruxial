@@ -4,6 +4,11 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-06-21
+
+### Fixed
+- **`cruxial view --web` no longer crashes when the port is taken.** Binding now steps to the next free port (up to 20) instead of raising `Address already in use`, so a second dashboard just opens on the next port. The actual bound port is printed (`note: port N was busy, using M`), and an exhausted range prints a clear message instead of a traceback. (The dashboard already prints its URL and auto-opens the browser; that only looks silent when launched in the background.)
+
 ## [0.5.0] — 2026-06-20
 
 The **action layer** — Cruxial moves from "is the tool call well-formed?" to "**did the action actually happen?**" Mark a side-effecting tool with `@action`, give it a receipt adapter, and every call resolves to a receipt-derived state (`posted` / `failed` / `unknown` / `needs_review`) in an append-only **ledger**. Only a real receipt advances state, so the model's narrated "done" can never promote an unconfirmed action to done. Additive and fail-open — 0.4 behaviour is unchanged until a tool is instrumented.
@@ -101,6 +106,7 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.5.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.1
 [0.5.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.0
 [0.4.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.4.0
 [0.3.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.3.0

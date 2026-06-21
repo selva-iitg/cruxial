@@ -107,12 +107,31 @@ def _make_handler(db_path: Path):
     return Handler
 
 
+def _bind(handler_cls: type, port: int, tries: int = 20) -> "ThreadingHTTPServer | None":
+    """Bind 127.0.0.1 starting at `port`, stepping to the next port when one is
+    in use — so a second `cruxial view --web` finds a free port instead of
+    crashing on EADDRINUSE. Returns the server, or None if the whole range is
+    taken. The actual port is on `server.server_address[1]`."""
+    for candidate in range(port, port + tries):
+        try:
+            return ThreadingHTTPServer(("127.0.0.1", candidate), handler_cls)
+        except (OSError, OverflowError):  # in use, or stepped past 65535
+            continue
+    return None
+
+
 def serve(db_path: Path, port: int = 7878, open_browser: bool = True) -> int:
     if not db_path.exists():
         print(f"error: no telemetry database at {db_path}")
         return 1
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(db_path))
-    url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd = _bind(_make_handler(db_path), port)
+    if httpd is None:
+        print(f"error: no free port in {port}..{port + 19}. Is another `cruxial view --web` already running?")
+        return 1
+    bound = httpd.server_address[1]
+    url = f"http://127.0.0.1:{bound}"
+    if bound != port:
+        print(f"note: port {port} was busy, using {bound}.", flush=True)
     print(f"cruxial · action ledger → {url}   (ctrl-c to stop)", flush=True)
     print(f"  db: {db_path}", flush=True)
     if open_browser:

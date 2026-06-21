@@ -16,7 +16,7 @@ from cruxial.core import guard
 from cruxial.ledger import Ledger
 from cruxial.receipts import ReceiptRegistry, id_field
 from cruxial.telemetry import SqliteSink
-from cruxial.webview import _make_handler, _op_to_dict, _state_payload, _PAGE
+from cruxial.webview import _bind, _make_handler, _op_to_dict, _state_payload, _PAGE
 
 
 def _ledger_db(tmp_path: Path) -> Path:
@@ -61,6 +61,37 @@ def test_page_has_api_hooks():
     assert "/api/state" in _PAGE and "/api/op/" in _PAGE
     assert "silent failures" in _PAGE.lower()
     assert "Protection" in _PAGE
+
+
+def test_bind_steps_past_a_busy_port():
+    # A second `cruxial view --web` must find a free port, not crash on EADDRINUSE.
+    import socket
+    from http.server import BaseHTTPRequestHandler
+
+    base = None  # a free port in a safe band, so base+tries stays <= 65535
+    for p in range(20000, 20100):
+        s = socket.socket()
+        try:
+            s.bind(("127.0.0.1", p)); s.close(); base = p; break
+        except OSError:
+            s.close()
+    assert base is not None, "no free test port"
+
+    busy = ThreadingHTTPServer(("127.0.0.1", base), BaseHTTPRequestHandler)
+    try:
+        srv = _bind(BaseHTTPRequestHandler, base)
+        assert srv is not None, "fallback should find a free port, not crash"
+        bound = srv.server_address[1]
+        assert base < bound <= base + 19, f"expected a stepped-up port, got {bound}"
+        srv.server_close()
+    finally:
+        busy.server_close()
+
+
+def test_bind_returns_none_when_range_exhausted():
+    from http.server import BaseHTTPRequestHandler
+    # No candidates to try -> None, so serve() prints a friendly error instead of crashing.
+    assert _bind(BaseHTTPRequestHandler, 7878, tries=0) is None
 
 
 def test_server_serves_page_and_api(tmp_path):
