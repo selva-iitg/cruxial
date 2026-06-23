@@ -119,6 +119,37 @@ def _hook_label(hook: Any, label: str | None) -> str | None:
     return None
 
 
+# Sentinel: the raw tool output was not supplied (distinct from a legit `None`
+# return). `verify()` is also called directly in tests without a value.
+_UNSET: Any = object()
+
+
+def _accepts_value(hook: VerifyHook) -> bool:
+    """True if a verify hook declares a 3rd positional param (the raw tool
+    output) or `*args`. Any introspection failure -> False, so the hook is
+    called the old `(args, receipt)` way (fail-open, fully backward compatible)."""
+    try:
+        params = inspect.signature(hook).parameters.values()
+    except (ValueError, TypeError):
+        return False
+    positional = 0
+    for p in params:
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            positional += 1
+    return positional >= 3
+
+
+def _invoke_hook(hook: VerifyHook, args: dict, receipt: Receipt | None, value: Any) -> Any:
+    """Call a verify hook, passing the raw tool output as a 3rd arg only when the
+    hook opts in (declares a 3rd positional param) and a value is available.
+    Existing 2-arg hooks are called exactly as before."""
+    if value is not _UNSET and _accepts_value(hook):
+        return hook(args, receipt, value)
+    return hook(args, receipt)
+
+
 class ActionRegistry:
     """Tracks which tools are side-effecting (@action) and their verify hooks."""
 
@@ -175,14 +206,16 @@ class ActionRegistry:
     # -- verify (sync + async) --
 
     def verify(
-        self, tool: str, args: dict, receipt: Receipt | None, *, latency_ms: float | None = None
+        self, tool: str, args: dict, receipt: Receipt | None, *,
+        latency_ms: float | None = None, value: Any = _UNSET,
     ) -> _Verdict:
         """Run built-ins + sync user hooks. An async hook in the sync path is
-        skipped (fail-open) with a warning — use arun()."""
+        skipped (fail-open) with a warning — use arun(). `value` is the raw tool
+        output, passed to hooks that opt in with a 3rd positional param."""
         verdicts = self._builtins(tool, receipt, latency_ms)
         for hook in self._hooks.get(tool, []):
             try:
-                out = hook(args, receipt)
+                out = _invoke_hook(hook, args, receipt, value)
             except Exception as exc:  # noqa: BLE001 — a buggy hook must not halt the tool
                 warnings.warn(
                     f"cruxial: verify hook for {tool!r} raised "
@@ -204,13 +237,15 @@ class ActionRegistry:
         return _combine(verdicts)
 
     async def averify(
-        self, tool: str, args: dict, receipt: Receipt | None, *, latency_ms: float | None = None
+        self, tool: str, args: dict, receipt: Receipt | None, *,
+        latency_ms: float | None = None, value: Any = _UNSET,
     ) -> _Verdict:
-        """Async twin — awaits coroutine-returning hooks; plain sync hooks work too."""
+        """Async twin — awaits coroutine-returning hooks; plain sync hooks work too.
+        `value` is the raw tool output, passed to hooks that opt in with a 3rd param."""
         verdicts = self._builtins(tool, receipt, latency_ms)
         for hook in self._hooks.get(tool, []):
             try:
-                out = hook(args, receipt)
+                out = _invoke_hook(hook, args, receipt, value)
                 if inspect.iscoroutine(out):
                     out = await out
             except Exception as exc:  # noqa: BLE001
@@ -284,6 +319,16 @@ def verify(
             # Runs only when a receipt exists (a no-receipt action is already
             # `unknown`); HALT a domain breach to land it in needs_review.
             return cruxial.HALT("over policy") if args["amount"] > 1000 else cruxial.PASS
+
+    A hook may declare an optional **3rd positional param** to receive the raw
+    tool output (the executor's return), for domain checks the normalized
+    receipt can't express — e.g. a clean trace with a wrong value:
+
+        @cruxial.verify("charge")
+        def _(args, receipt, output):
+            return cruxial.HALT("amount drift") if output["amount"] != args["amount"] else cruxial.PASS
+
+    Two-arg hooks are unchanged; the 3rd arg is passed only to hooks that opt in.
 
     Pass ``label`` to name the rule in the dashboard's Protection view (e.g.
     ``@verify("issue_refund", label="refund ≤ $1000")``); without it, the hook's

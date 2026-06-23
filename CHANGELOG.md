@@ -4,6 +4,11 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-06-23
+
+### Added
+- **Verify hooks can receive the raw tool output.** A `@cruxial.verify` hook may now declare an optional 3rd positional param `(args, receipt, output)` to inspect the executor's actual return, for domain checks the normalized receipt can't express (e.g. `HALT` when a returned amount drifts from the requested one — the "clean trace, wrong value" case). Fully backward compatible: existing 2-arg hooks are unchanged, and the 3rd arg is passed only to hooks that opt in.
+
 ## [0.5.2] — 2026-06-21
 
 ### Security
@@ -112,6 +117,7 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.5.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.3
 [0.5.2]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.2
 [0.5.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.1
 [0.5.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.0

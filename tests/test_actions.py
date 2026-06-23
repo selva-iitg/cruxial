@@ -173,6 +173,85 @@ async def test_averify_runs_builtins_and_sync_hooks():
     assert v.is_halt  # built-in receipt_required still fires
 
 
+# ─── raw tool output threaded to opt-in hooks (3rd positional arg) ────────────
+
+
+def test_accepts_value_arity_detection():
+    from cruxial.actions import _accepts_value
+    assert not _accepts_value(lambda a, r: PASS)            # 2 positional -> no
+    assert _accepts_value(lambda a, r, out: PASS)           # 3 positional -> yes
+    assert _accepts_value(lambda a, r, *rest: PASS)         # *args -> yes
+    assert not _accepts_value(len)                          # un-mappable -> fail-open no
+
+
+def test_verify_passes_raw_output_when_hook_opts_in():
+    reg = ActionRegistry(); reg.mark_action("charge")
+    seen = {}
+
+    def check(args, receipt, output):
+        seen["output"] = output
+        return HALT("amount drift") if output["amount"] != args["amount"] else PASS
+
+    reg.register_verify("charge", check)
+    v = reg.verify("charge", {"amount": 5}, EVID, value={"id": "ch_1", "amount": 999})
+    assert seen["output"] == {"id": "ch_1", "amount": 999}  # hook saw the RAW return
+    assert v.is_halt
+    # matching amount -> the same hook passes
+    assert reg.verify("charge", {"amount": 5}, EVID, value={"amount": 5}).kind == "pass"
+
+
+def test_two_arg_hook_unaffected_when_value_supplied():
+    reg = ActionRegistry(); reg.mark_action("charge")
+    reg.register_verify("charge", lambda a, r: PASS)        # legacy 2-arg hook
+    # value is supplied but the 2-arg hook is still called the old way (no crash)
+    assert reg.verify("charge", {}, EVID, value={"anything": 1}).kind == "pass"
+
+
+def test_opt_in_hook_without_value_fails_open():
+    # A 3-arg hook called with no value (direct verify, value=_UNSET) can't get
+    # its 3rd arg; the call fails open to PASS rather than crashing.
+    reg = ActionRegistry(); reg.mark_action("charge")
+    reg.register_verify("charge", lambda a, r, out: HALT("x"))
+    with pytest.warns(UserWarning):
+        assert reg.verify("charge", {}, EVID).kind == "pass"
+
+
+def test_execute_threads_raw_output_to_hook():
+    from cruxial.core import guard, GuardConfig
+    from cruxial.actions import ActionRegistry as AR
+    from cruxial.receipts import ReceiptRegistry, id_field
+    ar = AR(); ar.mark_action("charge")
+    rr = ReceiptRegistry(); rr.register("charge", id_field("id", kind="charge"))
+    ar.register_verify("charge",
+                       lambda args, receipt, output: HALT("drift") if output["amount"] != args["amount"] else PASS)
+    cx = guard({"charge": {"type": "object"}},
+               {"charge": lambda **k: {"id": "ch_1", "amount": 999}},
+               receipt_registry=rr, action_registry=ar, config=GuardConfig(sinks=("null",)))
+    r = cx.execute("charge", {"amount": 5})
+    assert r.state == "needs_review"   # hook HALTed on the raw-output drift
+
+
+async def test_aexecute_threads_raw_output_to_async_hook():
+    from cruxial.core import guard, GuardConfig
+    from cruxial.actions import ActionRegistry as AR
+    from cruxial.receipts import ReceiptRegistry, id_field
+    ar = AR(); ar.mark_action("charge")
+    rr = ReceiptRegistry(); rr.register("charge", id_field("id", kind="charge"))
+
+    async def acheck(args, receipt, output):
+        return HALT("drift") if output["amount"] != args["amount"] else PASS
+
+    ar.register_verify("charge", acheck)
+
+    async def aexec(**k):
+        return {"id": "ch_1", "amount": 999}
+
+    cx = guard({"charge": {"type": "object"}}, {"charge": aexec},
+               receipt_registry=rr, action_registry=ar, config=GuardConfig(sinks=("null",)))
+    r = await cx.aexecute("charge", {"amount": 5})
+    assert r.state == "needs_review"
+
+
 # ─── decorators ──────────────────────────────────────────────────────────────
 
 
