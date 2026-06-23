@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/cruxial.svg?label=pypi&color=blue)](https://pypi.org/project/cruxial/)
 [![Python](https://img.shields.io/pypi/pyversions/cruxial.svg)](https://pypi.org/project/cruxial/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Socket](https://badge.socket.dev/pypi/package/cruxial/0.5.2?artifact_id=tar-gz)](https://socket.dev/pypi/package/cruxial)
+[![Socket](https://badge.socket.dev/pypi/package/cruxial/0.5.3?artifact_id=tar-gz)](https://socket.dev/pypi/package/cruxial)
 
 **The action layer for AI agents.**
 
@@ -89,7 +89,7 @@ def _(raw):
     return cruxial.Receipt(ok=bool(raw.get("message_id")), id=raw.get("message_id"), kind="email")
 
 @cruxial.verify("send_email")            # optional domain check → PASS / FLAG / HALT
-def _(args, receipt):
+def _(args, receipt):                    # add an optional 3rd arg to see the raw tool output
     # Runs only once a receipt exists — a send with no receipt is already `unknown`.
     # HALT a real send that needs a human look (here: an external recipient) → needs_review.
     return cruxial.HALT("external recipient") if not args["to"].endswith("@acme.com") else cruxial.PASS

@@ -489,7 +489,7 @@ class Cruxial:
         try:
             latency_ms = perf_ms_since(start_ns)
             receipt = self._receipts.adapt(name, value)
-            verdict = self._actions.verify(name, args, receipt, latency_ms=latency_ms)
+            verdict = self._actions.verify(name, args, receipt, latency_ms=latency_ms, value=value)
             return self._emit_operation(name, args, value, receipt, verdict, start_ns)
         except Exception as exc:  # noqa: BLE001 — never let the stage break the host
             if not self.config.fail_open:
@@ -510,7 +510,7 @@ class Cruxial:
         try:
             latency_ms = perf_ms_since(start_ns)
             receipt = self._receipts.adapt(name, value)
-            verdict = await self._actions.averify(name, args, receipt, latency_ms=latency_ms)
+            verdict = await self._actions.averify(name, args, receipt, latency_ms=latency_ms, value=value)
             return self._emit_operation(name, args, value, receipt, verdict, start_ns)
         except Exception as exc:  # noqa: BLE001
             if not self.config.fail_open:
