@@ -10,19 +10,17 @@
 
 Your agent said it sent the email. It didn't.
 
-Cruxial proves what your agent actually did. Every side-effecting tool call
-resolves from a **receipt** — so "done" is evidence, not the model's word:
-`posted` when there's proof, `unknown` when there isn't. Along the way it
-validates arguments against your schema and auto-repairs bad ones before they
-run. Drop-in for OpenAI and Anthropic. Overhead is under 1ms p99 — validation
-runs locally, no extra network hop. Fails open by default: if Cruxial itself
-errors, your tool still runs.
+Cruxial proves what your agent actually did. Every side-effecting tool call resolves from a **receipt**: `posted` when there's proof, `unknown` when there isn't. Never the model's word for it.
+
+It also validates each call against your schema and auto-repairs bad arguments before they run.
+
+Drop-in for OpenAI and Anthropic. Under 1ms p99, all local, no extra network hop. Fails open by default: if Cruxial itself errors, your tool still runs.
 
 ```bash
 pip install cruxial
 ```
 
-Then watch it catch every failure category live — offline, no API key:
+Then watch it catch every failure category live, offline, no API key:
 
 ```bash
 cruxial demo
@@ -30,20 +28,25 @@ cruxial demo
 
 ![cruxial demo catching every failure category offline, then showing the repair prompt](https://raw.githubusercontent.com/cruxial-ai/cruxial/main/assets/cruxial-demo.gif)
 
-## Two ways to use it — same guarantees
+## When not to use Cruxial yet
 
-Pick by how much of the loop you want to own. Both paths validate every tool
-call, auto-repair bad args, read the receipt, and record every action to the
-same local ledger:
+Cruxial is honest about its boundaries. Reach for it when an agent takes **side-effecting actions** (sends, charges, writes) and you need proof they happened. Some cases it does not cover yet:
 
-- **`cruxial.run()`** drives one model turn for you — call the model, validate,
-  execute, auto-repair in one round-trip, record. The drop-in below.
-- **`guard()`** keeps the loop yours — for streaming, a framework that owns the
-  model call (LangGraph, CrewAI, an Assistants/Responses runtime), or a worker
-  dispatching a single call. You call `.execute()` / `.check_bypass()` yourself
-  ([Own your loop](#own-your-loop--guard)).
+- **You want proof the *right* thing happened, not just *something*.** A receipt with an id resolves to `posted`. Confirming the id is the right account, amount, or recipient is your `@verify` hook's job (it can read the raw tool output), not automatic. See [Guarantees and edge cases](#guarantees-and-edge-cases).
+- **Read-only or pure-compute tools.** Nothing to prove. Cruxial validates the args and otherwise stays out of the way.
+- **You need a runtime block on a bad action.** Cruxial records and surfaces (`unknown` / `needs_review`); it does not stop your tool from running. Acting on that state is your policy.
+- **Non-Python stacks today.** Python only for now. TypeScript is on the roadmap.
 
-## Quickstart — `cruxial.run()`
+If your agent only reads and reasons, you don't need this yet. The value shows up the moment it starts *doing* things.
+
+## Two ways to use it, same guarantees
+
+Pick by how much of the loop you want to own. Both paths validate every tool call, auto-repair bad args, read the receipt, and record every action to the same local ledger.
+
+- **`cruxial.run()`** drives one model turn for you: call the model, validate, execute, auto-repair in one round-trip, record. The drop-in below.
+- **`guard()`** keeps the loop yours, for streaming, a framework that owns the model call (LangGraph, CrewAI, an Assistants/Responses runtime), or a worker dispatching a single call. You call `.execute()` and `.check_bypass()` yourself ([Own your loop](#own-your-loop--guard)).
+
+## Quickstart: `cruxial.run()`
 
 ```python
 import cruxial
@@ -56,26 +59,22 @@ result = cruxial.run(
     executors=executors,    # {tool_name: your_function}
 )
 
-while not result.finished:  # your loop stays yours — one model call per turn
+while not result.finished:  # your loop stays yours, one model call per turn
     result = cruxial.run(client, model="gpt-4o", messages=result.messages,
                          tools=tools, executors=executors)
 
 print(result.text)          # the model's final answer
 ```
 
-It reuses your configured client (Azure endpoint, `base_url`, timeouts all preserved),
-derives schemas from `tools`, and fails open. Deliberately **one turn, not a framework** —
-no streaming, no multi-turn ownership, you decide when to stop. `result.operations` and
-`result.state(tool)` reflect the **latest turn**; keep your own list across the loop if you
-want every turn's operations (the full history is always in the ledger — `cruxial view`).
+It reuses your configured client (Azure endpoint, `base_url`, timeouts all preserved), derives schemas from `tools`, and fails open. Deliberately **one turn, not a framework**: no streaming, no multi-turn ownership, you decide when to stop.
 
-## The action layer — did it actually happen?
+`result.operations` and `result.state(tool)` reflect the **latest turn**. Keep your own list across the loop if you want every turn's operations. The full history is always in the ledger (`cruxial view`).
 
-Schema validation catches a *malformed* call. It can't catch the worse failure: your
-agent says **"I sent the email"** and never called the tool — or the call returned with no
-proof it worked. Mark a side-effecting tool with `@action`, tell Cruxial how to read its
-**receipt**, and every call resolves from the receipt — never the model's word for it. No
-receipt ⇒ `unknown`, never a silent "done".
+## The action layer: did it actually happen?
+
+Schema validation catches a *malformed* call. It can't catch the worse failure: your agent says **"I sent the email"** and never called the tool, or the call returned with no proof it worked.
+
+Mark a side-effecting tool with `@action`, tell Cruxial how to read its **receipt**, and every call resolves from the receipt instead of the model's word for it. No receipt means `unknown`, never a silent "done".
 
 ```python
 import cruxial
@@ -90,36 +89,29 @@ def _(raw):
 
 @cruxial.verify("send_email")            # optional domain check → PASS / FLAG / HALT
 def _(args, receipt):                    # add an optional 3rd arg to see the raw tool output
-    # Runs only once a receipt exists — a send with no receipt is already `unknown`.
+    # Runs only once a receipt exists. A send with no receipt is already `unknown`.
     # HALT a real send that needs a human look (here: an external recipient) → needs_review.
     return cruxial.HALT("external recipient") if not args["to"].endswith("@acme.com") else cruxial.PASS
 
 result = cruxial.run(client, model=m, messages=msgs, tools=tools, executors=ex)
 result.state("send_email")   # → "posted" | "unknown" | "needs_review" | "failed"
-result.render()              # receipt-derived summary — never a bare "done"
+result.render()              # receipt-derived summary, never a bare "done"
 ```
 
-A claimed-but-never-called action is caught **deterministically** — recorded as `unknown`
-with no extra model call (the default). Then see what your agents actually did:
+A claimed-but-never-called action is caught **deterministically**, recorded as `unknown` with no extra model call. Then see what your agents actually did:
 
 ```bash
 cruxial view           # terminal ledger
-cruxial view --web     # the dashboard below — confirmed vs silent-failure (unknown), per-op receipts
+cruxial view --web     # the dashboard below: confirmed vs silent-failure (unknown), per-op receipts
 ```
 
-![cruxial view --web — the action ledger: 3 of 19 agent actions couldn't be confirmed (silent failures), shown next to receipt-backed posted ops, per-tool validator coverage, and the receipt/actor for every operation](assets/cruxial-dashboard.png)
+![cruxial view --web, the action ledger: 3 of 19 agent actions couldn't be confirmed (silent failures), shown next to receipt-backed posted ops, per-tool validator coverage, and the receipt/actor for every operation](assets/cruxial-dashboard.png)
 
-> **Upgrading from 0.4:** the action layer is additive — existing `guard()`/`run()` code is
-> unchanged until you mark a tool `@action`. One breaking change: `run(bypass="on")` now
-> *detects deterministically* and records the action as `unknown` instead of re-prompting the
-> model (the old re-prompt remediation has been removed — what to do about an `unknown` is your
-> policy). See the [CHANGELOG](CHANGELOG.md).
+> **Upgrading from 0.4:** the action layer is additive. Existing `guard()`/`run()` code is unchanged until you mark a tool `@action`. One breaking change: `run(bypass="on")` now *detects deterministically* and records the action as `unknown` instead of re-prompting the model (the old re-prompt remediation has been removed; what to do about an `unknown` is your policy). See the [CHANGELOG](CHANGELOG.md).
 
-## Own your loop — `guard()`
+## Own your loop: `guard()`
 
-Can't hand the turn to `run()` — streaming, a framework that owns the model call,
-a worker dispatching one tool? Wrap your registry once and call the two primitives
-`run()` is built on. They land the **same** ledger:
+Can't hand the turn to `run()`? Streaming, a framework that owns the model call, a worker dispatching one tool? Wrap your registry once and call the two primitives `run()` is built on. They land the **same** ledger.
 
 ```python
 import json
@@ -132,7 +124,7 @@ for tool_call in llm_response.tool_calls:
     result = cx.execute(tool_call.name, args)        # validate → run → receipt → record
     if not result.ok:
         result.raise_on_failure()                    # typed error (category on result.failure)
-    if result.state == "needs_review":               # a verify HALT — surface it, don't blind-retry
+    if result.state == "needs_review":               # a verify HALT, surface it, don't blind-retry
         ...
     use(result.value)
 
@@ -141,24 +133,17 @@ if not tool_calls_this_turn:
     cx.check_bypass(assistant_text, called_tools=tools_called_so_far)
 ```
 
-`cx.execute()` records the full operation (receipt-derived `state`), so the healthy
-path **and** the called-but-no-proof failure are covered for free. The one line not to
-skip is **`cx.check_bypass()`** on text-only turns — the safe, fused detect-and-record.
-(The bare `cruxial.bypass.detect_bypass()` *detects* but doesn't record, silently
-dropping the catch.)
+`cx.execute()` records the full operation (receipt-derived `state`), so the healthy path **and** the called-but-no-proof failure are covered for free.
 
-**Async?** `await cruxial.arun(...)` and `await cx.aexecute(...)` — same contract,
-everything awaited.
+The one line not to skip is **`cx.check_bypass()`** on text-only turns. It is the safe, fused detect-and-record for the claimed-but-never-called catch. `run()` does this for you internally; when you own the loop, you call it. (The bare `cruxial.bypass.detect_bypass()` *detects* but doesn't record, silently dropping the catch.)
 
-**See it run:** `python examples/action_layer.py` shows both `execute()` and `run()`
-offline (no key); [`examples/run_vs_own_loop.py`](examples/run_vs_own_loop.py) puts both
-wirings through a live model and prints a parity table — identical ledger either way, so
-the choice is ergonomic, not a safety trade-off.
+**Async?** `await cruxial.arun(...)` and `await cx.aexecute(...)`, same contract, everything awaited.
+
+**See it run:** `python examples/action_layer.py` shows both `execute()` and `run()` offline (no key). [`examples/run_vs_own_loop.py`](examples/run_vs_own_loop.py) puts both wirings through a live model and prints a parity table: identical ledger either way, so the choice is ergonomic, not a safety trade-off.
 
 ## What it catches
 
-Eight failure categories. Every interception is logged with the failure
-category — never the raw argument values.
+Eight failure categories. Every interception is logged with the failure category, never the raw argument values.
 
 | Category | What it catches |
 |---|---|
@@ -169,24 +154,13 @@ category — never the raw argument values.
 | `constraint_violation` | maxLength / minimum / multipleOf / etc. |
 | `extra_field` | Model invented a field that doesn't exist |
 | `unknown_tool` | Tool name not in registry |
-| `tool_bypass` | **Model *claimed* it did something but emitted no call** — "your agent said it sent the email. It didn't." |
+| `tool_bypass` | **Model *claimed* it did something but emitted no call** |
 
-The first seven are schema-derivable. **`tool_bypass`** is the one validators
-structurally can't catch — there's no call to validate. See below.
+The first seven are schema-derivable. **`tool_bypass`** is the one validators structurally can't catch: there's no call to validate.
 
-> **`extra_field` on open schemas.** JSON Schema is open by default, so an invented
-> field passes schema validation. Cruxial still catches it: when you execute, the
-> field is checked against the executor's signature and blocked as `extra_field`
-> before it can crash the call — so a hallucinated field is caught either at the
-> schema layer (`additionalProperties: false` / `GuardConfig(strict_properties=True)`)
-> or at the executor boundary. An executor that declares `**kwargs` opts into extras
-> and is never blocked.
+### tool_bypass: the silent failure
 
-## tool_bypass — catch the action your agent claimed but never took
-
-A model says *"I've sent the email"* and emits **no `send_email` call**. No
-call ever goes out — so no error, no log, nothing to grep for. The silent
-failure. `cruxial.run()` catches it:
+A model says *"I've sent the email"* and emits **no `send_email` call**. No call goes out, so no error, no log, nothing to grep for. `cruxial.run()` catches it:
 
 ```python
 result = cruxial.run(client, model="gpt-4o", messages=messages,
@@ -196,26 +170,11 @@ if result.bypass:        # the model claimed an action it never called → recor
     print("caught a bypass:", result.bypass.tool)
 ```
 
-**How it works (zero cost on normal turns):** a final text turn is flagged
-*only* when it claims a completed action (`"sent"`, not `"send"`), attributed
-to the assistant (not *"you"* / *"the scheduler"* / *"automatically"*), for a
-side-effecting tool that was never called — and that no tool which actually ran
-already satisfies. As with the action layer above, the flag is recorded
-**deterministically as `unknown`** with no extra model call — the receipt's
-absence is the oracle. Owning your loop instead of `run()`?
-`cx.check_bypass(text, called_tools=...)` records the same catch.
-
-Precision-first by design: the local pre-filter fires on completion-form verbs
-with conservative attribution/negation guards (a 132-scenario adversarial set is
-in [BENCHMARKS.md](BENCHMARKS.md)), so terse claims ("Done.", "Email's out.") are
-a documented recall gap — a high-quality net, not a complete guarantee. The
-durable guarantee is the **receipt**, not the prose read. `bypass="off"` disables
-detection entirely.
+The flag is recorded **deterministically as `unknown`** with no extra model call. The receipt's absence is the oracle. Owning your loop instead of `run()`? `cx.check_bypass(text, called_tools=...)` records the same catch. `bypass="off"` disables detection entirely.
 
 ## Auto-repair
 
-`cruxial.run()` already auto-repairs for you. If you use `guard()` directly,
-call the adapter helper with the failure context:
+`cruxial.run()` auto-repairs for you. If you use `guard()` directly, call the adapter helper with the failure context:
 
 ```python
 from cruxial.adapters.openai import auto_repair
@@ -224,7 +183,7 @@ cruxial = guard(schemas=schemas, executors=executors)
 result = cruxial.execute(name, args)
 
 if not result.ok:
-    # 1-attempt structured retry — feeds the failure back to the model
+    # 1-attempt structured retry, feeds the failure back to the model
     new_args = auto_repair(
         client,
         model=model,
@@ -237,23 +196,17 @@ if not result.ok:
     result = cruxial.execute_repaired(name, new_args)
 ```
 
-Roughly **90% of intercepted calls are fixed in a single repair round-trip**
-on the pooled live-MCP benchmark (87–94% per run on current code). Every number
-is sourced in [BENCHMARKS.md](BENCHMARKS.md).
+Roughly **90% of intercepted calls are fixed in a single repair round-trip** on the pooled live-MCP benchmark (87 to 94% per run on current code). Every number is sourced in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## See your interception rate
 
-Every interception is written to a local SQLite file (no data leaves your
-machine). To see your real rate:
+Every interception is written to a local SQLite file. No data leaves your machine. To see your real rate:
 
 ```bash
 cruxial stats
 ```
 
-**Stats are project-local automatically** — inside a project (a dir with `.git/`,
-`pyproject.toml`, `setup.py`, or `.cruxial/`) the DB lives at `./.cruxial/telemetry.sqlite`,
-so each app stays separate; elsewhere it falls back to `~/.cruxial/`. Override with
-`CRUXIAL_DB_PATH`; `cruxial diagnostic` shows the active path.
+**Stats are project-local automatically.** Inside a project (a dir with `.git/`, `pyproject.toml`, `setup.py`, or `.cruxial/`) the DB lives at `./.cruxial/telemetry.sqlite`, so each app stays separate; elsewhere it falls back to `~/.cruxial/`. Override with `CRUXIAL_DB_PATH`; `cruxial diagnostic` shows the active path.
 
 Output:
 
@@ -278,16 +231,13 @@ top failure categories
   constraint_violation                16
 ```
 
-`cruxial stats` also shows the registry independently of traffic — handy for the
-"is it even on?" check after install:
+`cruxial stats` also shows the registry independently of traffic, handy for the "is it even on?" check after install:
 
 ```
   registry              6 registered  ·  3 fired  ·  1 intercepted
 ```
 
-Traffic but 0 interceptions usually means a well-behaved model on a simple schema —
-`cruxial.testing.violation_payloads(schema)` fires a synthetic violation per category
-to verify end-to-end.
+Traffic but 0 interceptions usually means a well-behaved model on a simple schema. `cruxial.testing.violation_payloads(schema)` fires a synthetic violation per category to verify end-to-end.
 
 ## How it works
 
@@ -304,8 +254,8 @@ sequenceDiagram
         C->>T: run tool
         T-->>C: result (+ receipt for an @action)
         C->>C: resolve state from the receipt
-        C->>L: record operation — posted | unknown | needs_review | failed
-        C-->>M: receipt-derived state — never a bare "done"
+        C->>L: record operation: posted | unknown | needs_review | failed
+        C-->>M: receipt-derived state, never a bare "done"
     else args invalid
         C->>L: record intercepted + failure category (hashes only)
         opt auto-repair enabled
@@ -314,41 +264,85 @@ sequenceDiagram
         end
         C-->>M: typed failure (caller decides what to do)
     end
-    Note over M,C: model claims an action but emits NO call → recorded as unknown (the silent-failure catch)
+    Note over M,C: model claims an action but emits NO call, recorded as unknown (the silent-failure catch)
 ```
 
-Cruxial wraps the **tool registry**, not the LLM client. No monkey-patching,
-no proxies, no framework lock-in.
+Cruxial wraps the **tool registry**, not the LLM client. No monkey-patching, no proxies, no framework lock-in.
 
-## Schema source — if your LLM sees a trimmed schema
+## Guarantees and edge cases
 
-If you keep two views of a tool schema — a **canonical** one for execution and a
-**trimmed** one sent to the LLM — register the *trimmed* one. The LLM can only satisfy
-the schema it was shown; validating against canonical fields it never saw turns
-`missing_required` / `extra_field` into false positives.
+The core path is above. These are the details that matter once you run Cruxial against a real agent.
+
+<details>
+<summary><b>A receipt proves <i>something</i> happened, not the <i>right</i> thing</b></summary>
+
+<br>
+
+`posted` means the tool returned proof a call landed (an id, a message_id, a job id). It does **not** by itself prove the call hit the right account, amount, or recipient. A shallow receipt (HTTP 200 with the wrong target) still resolves to `posted`.
+
+Closing that gap is the `@verify` hook's job. Add an optional 3rd argument to read the **raw tool output** and assert the specifics:
+
+```python
+@cruxial.verify("charge")
+def _(args, receipt, output):            # 3rd arg = the raw return value
+    # HALT if the amount that came back isn't the amount we asked to charge
+    return cruxial.HALT("amount drift") if output["amount"] != args["amount"] else cruxial.PASS
+```
+
+A receipt is evidence at a level. Name the level you can actually prove rather than overclaiming.
+
+</details>
+
+<details>
+<summary><b><code>extra_field</code> on open schemas</b></summary>
+
+<br>
+
+JSON Schema is open by default, so an invented field passes schema validation. Cruxial still catches it: when you execute, the field is checked against the executor's signature and blocked as `extra_field` before it can crash the call.
+
+So a hallucinated field is caught either at the schema layer (`additionalProperties: false` or `GuardConfig(strict_properties=True)`) or at the executor boundary. An executor that declares `**kwargs` opts into extras and is never blocked.
+
+</details>
+
+<details>
+<summary><b><code>tool_bypass</code> precision and recall</b></summary>
+
+<br>
+
+Precision-first by design: the local pre-filter fires only on completion-form verbs (`"sent"`, not `"send"`), attributed to the assistant (not *"you"* / *"the scheduler"* / *"automatically"*), for a side-effecting tool that was never called, and that no tool which actually ran already satisfies. A 132-scenario adversarial set is in [BENCHMARKS.md](BENCHMARKS.md).
+
+Because it is precision-first, terse claims (`"Done."`, `"Email's out."`) are a documented recall gap, a high-quality net rather than a complete guarantee. The durable guarantee is the **receipt**, not the prose read.
+
+</details>
+
+<details>
+<summary><b>Schema source: if your LLM sees a trimmed schema</b></summary>
+
+<br>
+
+If you keep two views of a tool schema, a **canonical** one for execution and a **trimmed** one sent to the LLM, register the *trimmed* one. The LLM can only satisfy the schema it was shown; validating against canonical fields it never saw turns `missing_required` / `extra_field` into false positives.
 
 ```python
 # Right
 cruxial = guard(schemas=tool_definitions_sent_to_llm)
 
-# Must use the canonical schema? Opt in — validation is unchanged, but it warns at
+# Must use the canonical schema? Opt in. Validation is unchanged, but it warns at
 # construction and tags every telemetry row (visible in `cruxial stats`) to filter later:
 cruxial = guard(schemas=canonical_definitions,
                 config=GuardConfig(schema_origin="canonical"))
 ```
 
+</details>
+
 ## Privacy
 
-By default Cruxial stores: tool name, schema fingerprint, failure category,
-timing. **Never the argument values themselves.** Hashes only.
+By default Cruxial stores: tool name, schema fingerprint, failure category, timing. **Never the argument values themselves.** Hashes only.
 
-The interceptor runs in your process. Your data never leaves your
-infrastructure unless you opt into Cruxial Cloud (coming soon).
+The interceptor runs in your process. Your data never leaves your infrastructure unless you opt into Cruxial Cloud (coming soon).
 
 ## Define tools as Pydantic models
 
-Already model your tools with Pydantic? Skip the hand-written JSON Schema —
-cruxial extracts it for you. Optional: `pip install cruxial[pydantic]` (v2).
+Already model your tools with Pydantic? Skip the hand-written JSON Schema, cruxial extracts it for you. Optional: `pip install cruxial[pydantic]` (v2).
 
 ```python
 from pydantic import BaseModel, Field
@@ -366,8 +360,7 @@ tools   = [tool_schema(SendEmail, name="send_email")]                       # Op
 # tools = [tool_schema(SendEmail, name="send_email", provider="anthropic")]  # Anthropic
 ```
 
-Works with `run()` too — `run()` derives the schema from `tools`, so the whole
-managed turn (validate → execute → auto-repair) runs against your model:
+Works with `run()` too. `run()` derives the schema from `tools`, so the whole managed turn (validate → execute → auto-repair) runs against your model:
 
 ```python
 from cruxial import run
@@ -376,25 +369,24 @@ run(client, model="gpt-4o", messages=msgs,
     executors={"send_email": send_email})
 ```
 
-Nested models and enums (Pydantic's `$defs`/`$ref`) validate end to end. The
-adapter is lazy and optional — cruxial's core never requires Pydantic.
+Nested models and enums (Pydantic's `$defs`/`$ref`) validate end to end. The adapter is lazy and optional; cruxial's core never requires Pydantic.
 
 ## What ships today (v0.5)
 
 - ✅ Python SDK
 - ✅ OpenAI + **Azure OpenAI** + Anthropic + LiteLLM (auto via normalization)
 - ✅ JSON Schema validation
-- ✅ 7 schema-validation categories (+ `tool_bypass` below = 8 total)
+- ✅ 7 schema-validation categories (+ `tool_bypass` = 8 total)
 - ✅ 1-attempt auto-repair
 - ✅ Local SQLite + stdout telemetry
 - ✅ `cruxial stats` CLI
 - ✅ Fail-open by default
-- ✅ `cruxial.run()` — one managed turn (OpenAI / Azure / Anthropic / LiteLLM)
-- ✅ **The action layer** — `@action` / `@receipt` / `@verify` resolve every call to `posted` / `unknown` / `needs_review` / `failed` from the receipt, never the model's word
-- ✅ **`tool_bypass` detection** — the claimed-but-never-called catch, recorded deterministically as `unknown`
-- ✅ **`cruxial view`** — local action ledger (`--web` dashboard) of what your agents actually did
-- ✅ **`cx.check_bypass()`** — the fused detect-and-record primitive for when you own the loop
-- ✅ **Pydantic adapter** — define tools as Pydantic models (`cruxial[pydantic]`)
+- ✅ `cruxial.run()`, one managed turn (OpenAI / Azure / Anthropic / LiteLLM)
+- ✅ **The action layer**: `@action` / `@receipt` / `@verify` resolve every call to `posted` / `unknown` / `needs_review` / `failed` from the receipt, never the model's word
+- ✅ **`tool_bypass` detection**, the claimed-but-never-called catch, recorded deterministically as `unknown`
+- ✅ **`cruxial view`**, local action ledger (`--web` dashboard) of what your agents actually did
+- ✅ **`cx.check_bypass()`**, the fused detect-and-record primitive for when you own the loop
+- ✅ **Pydantic adapter**, define tools as Pydantic models (`cruxial[pydantic]`)
 
 Coming:
 - TypeScript SDK
@@ -404,13 +396,8 @@ Coming:
 
 ## Questions or feedback?
 
-Open a [GitHub issue](https://github.com/cruxial-ai/cruxial/issues), or reach the
-maintainers on [Discord](https://discord.gg/qJu7yq54s). We'd especially like to hear
-from anyone running Cruxial in a real agent — early design-partner feedback shapes
-the roadmap.
+Open a [GitHub issue](https://github.com/cruxial-ai/cruxial/issues), or reach the maintainers on [Discord](https://discord.gg/qJu7yq54s). We'd especially like to hear from anyone running Cruxial in a real agent. Early design-partner feedback shapes the roadmap.
 
 ## License
 
-MIT. The SDK runs entirely in your process. The hosted dashboard (Cruxial
-Cloud) will be a separate paid product. The interceptor itself stays MIT
-forever.
+MIT. The SDK runs entirely in your process. The hosted dashboard (Cruxial Cloud) will be a separate paid product. The interceptor itself stays MIT forever.
