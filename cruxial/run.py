@@ -128,6 +128,9 @@ def run(
         executors=dict(executors),
         config=config or GuardConfig(),
     )
+    # run() handles the absence catch itself (step 3) — tell a caller-supplied
+    # guard so its close() doesn't warn that check_bypass() was never called.
+    _mark_bypass_managed(cx)
 
     # 1. One model call.
     resp = strat.create(client, model, messages, tools, create_kwargs)
@@ -267,6 +270,7 @@ async def arun(
         executors=dict(executors),
         config=config or GuardConfig(),
     )
+    _mark_bypass_managed(cx)
 
     resp = await strat.acreate(client, model, messages, tools, create_kwargs)
     assistant_msg, calls, text = strat.parse(resp)
@@ -353,6 +357,18 @@ async def arun(
 
 
 # ─── bypass helpers ────────────────────────────────────────────────────────
+
+
+def _mark_bypass_managed(cx: Any) -> None:
+    """Flag a guard as having its absence catch driven by run()/arun(), so its
+    close() won't warn that check_bypass() was never called by hand. Safe on a
+    NoopCruxial or any object without the hook."""
+    mark = getattr(cx, "_mark_bypass_managed", None)
+    if callable(mark):
+        try:
+            mark()
+        except Exception:
+            pass
 
 
 def _tool_meta(tools: list[dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
