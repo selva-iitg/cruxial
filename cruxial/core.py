@@ -264,6 +264,7 @@ class Cruxial:
     __slots__ = (
         "schemas", "executors", "sink", "config", "_schema_hashes",
         "_receipts", "_actions", "_ledger", "_exec_kw",
+        "_bypass_seen", "_bypass_managed", "_saw_traffic",
     )
 
     def __init__(
@@ -300,6 +301,15 @@ class Cruxial:
         self._receipts = receipt_registry if receipt_registry is not None else default_registry()
         self._actions = action_registry if action_registry is not None else default_action_registry()
         self._ledger = Ledger(sink)
+        # Bypass-coverage tracking. The absence catch ("said it sent the email,
+        # never called the tool") is automatic only under run(); in the own-loop
+        # path it requires check_bypass(). These flags let close() warn when a
+        # guard that has @action tools ran traffic but never engaged the catch —
+        # turning a silent gap into a visible one (cruxial's own thesis, applied
+        # to cruxial). See close().
+        self._bypass_seen = False     # check_bypass() was called at least once
+        self._bypass_managed = False  # run()/arun() drives the absence catch here
+        self._saw_traffic = False     # at least one execute()/check() happened
         # Precompute schema hashes once (drift detection later).
         self._schema_hashes: dict[str, str] = {
             name: hash_schema(schema) for name, schema in schemas.items()
@@ -392,6 +402,7 @@ class Cruxial:
     ) -> ExecutionResult | None:
         """Unknown-tool + validation, shared by execute()/aexecute(). Returns a
         failure result to return early, or None to proceed to the call."""
+        self._saw_traffic = True
         if name not in self.schemas:
             failure = unknown_tool(name, list(self.schemas))
             self._record(
@@ -581,6 +592,7 @@ class Cruxial:
         """
         start_ns = time.perf_counter_ns()
         args = args or {}
+        self._saw_traffic = True
 
         if name not in self.schemas:
             failure = unknown_tool(name, list(self.schemas))
@@ -819,6 +831,7 @@ class Cruxial:
         is every tool called so far in the conversation (so a claim already
         satisfied by a real call is NOT flagged). Fail-open: never raises.
         """
+        self._bypass_seen = True  # the absence catch is wired up — suppress the close() warning
         try:
             names = list(tool_names) if tool_names is not None else list(self.schemas)
             suspicion = detect_bypass(
@@ -839,7 +852,43 @@ class Cruxial:
         except Exception:
             return None  # fail-open: a guard helper must never break the host
 
+    def _mark_bypass_managed(self) -> None:
+        """Called by run()/arun() on the guard they drive: the absence catch is
+        handled by the managed loop, so close() must not warn that check_bypass()
+        was never called by hand."""
+        self._bypass_managed = True
+
+    def _bypass_uncovered(self) -> bool:
+        """True when this guard has @action tool(s) and ran traffic, but the
+        absence catch was never engaged (no check_bypass(), not run()-managed) —
+        i.e. claimed-but-never-called actions went uncaught this session."""
+        if self._bypass_seen or self._bypass_managed or not self._saw_traffic:
+            return False
+        # Only relevant if at least one registered tool is a side-effecting
+        # @action — otherwise there's nothing whose absence is worth catching,
+        # and warning would be crying wolf (precision-first).
+        try:
+            return any(self._actions.is_action(n) for n in self.schemas)
+        except Exception:
+            return False
+
     def close(self) -> None:
+        # Turn a silent gap into a visible one: if the absence catch never ran
+        # for a guard that has @action tools, say so. Fail-open — a warning must
+        # never break teardown.
+        try:
+            if self._bypass_uncovered():
+                warnings.warn(
+                    "cruxial: bypass detection never ran this session. This guard has "
+                    "@action tool(s) and executed calls, but check_bypass() was never "
+                    "called and it wasn't driven by cruxial.run(). Claimed-but-never-called "
+                    "actions (the model says it sent the email but never called the tool) "
+                    "were NOT caught. On text-only turns call "
+                    "cx.check_bypass(assistant_text, called_tools=...), or use cruxial.run().",
+                    stacklevel=2,
+                )
+        except Exception:
+            pass
         try:
             self.sink.close()
         except Exception:

@@ -293,6 +293,19 @@ def action(
     Records the action in the registry and tags the function with
     ``__cruxial_action__`` so the run/guard layer can detect it. Returns the
     function unchanged.
+
+    Scope — what this does and does NOT catch:
+      - When the decorated function **runs**, its result must yield a real
+        receipt or the action resolves to ``unknown`` / ``needs_review`` (the
+        built-in ``receipt_required`` verifier). This is the catch ``@action``
+        gives you.
+      - It does **not**, on its own, catch the *claimed-but-never-called* case —
+        the model says "I sent the email" and the function is never invoked. A
+        decorator can't fire for a call that never happened. That absence catch
+        lives at the loop boundary: it is automatic under ``cruxial.run()``, and
+        in a hand-rolled loop you must call ``cx.check_bypass(text, called_tools=...)``
+        on text-only turns. A guard with ``@action`` tools that never engages
+        either path warns at ``close()``.
     """
 
     def wrap(f: Callable[..., Any]) -> Callable[..., Any]:

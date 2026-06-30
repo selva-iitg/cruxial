@@ -33,6 +33,7 @@ cruxial demo
 Cruxial is honest about its boundaries. Reach for it when an agent takes **side-effecting actions** (sends, charges, writes) and you need proof they happened. Some cases it does not cover yet:
 
 - **You want proof the *right* thing happened, not just *something*.** A receipt with an id resolves to `posted`. Confirming the id is the right account, amount, or recipient is your `@verify` hook's job (it can read the raw tool output), not automatic. See [Guarantees and edge cases](#guarantees-and-edge-cases).
+- **You own the loop but don't call `check_bypass()`.** The claimed-but-never-called catch ("said it sent it, never called the tool") is automatic under `run()`. In your own loop it runs only when you call `cx.check_bypass(text, called_tools=...)` on text-only turns — skip it and that one catch is silently off. `@action` alone can't cover it: a decorator can't fire for a call that never happened. A guard with `@action` tools that never engages the catch warns at `close()`. See [Own your loop](#own-your-loop--guard).
 - **Read-only or pure-compute tools.** Nothing to prove. Cruxial validates the args and otherwise stays out of the way.
 - **You need a runtime block on a bad action.** Cruxial records and surfaces (`unknown` / `needs_review`); it does not stop your tool from running. Acting on that state is your policy.
 - **Non-Python stacks today.** Python only for now. TypeScript is on the roadmap.
