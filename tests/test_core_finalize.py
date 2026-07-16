@@ -110,7 +110,7 @@ def test_adapter_crash_resolves_unknown_not_posted():
     assert cx.execute("send_email", {}).state == "unknown"
 
 
-def test_stage_failure_degrades_to_0_4(monkeypatch):
+def test_stage_failure_records_unattested(monkeypatch):
     from cruxial import ledger as ledger_mod
 
     ar, rr, sink = ActionRegistry(), ReceiptRegistry(), NullSink()
@@ -126,8 +126,10 @@ def test_stage_failure_degrades_to_0_4(monkeypatch):
     monkeypatch.setattr(ledger_mod.StateResolver, "resolve", staticmethod(explode))
     with pytest.warns(UserWarning):
         r = cx.execute("send_email", {})
-    assert r.ok and r.value == {"message_id": "m1"}  # tool result still returns
-    assert r.state is None  # stage didn't complete
+    assert r.ok and r.value == {"message_id": "m1"}  # tool result still returns (fail-open)
+    # fail-open is now VISIBLE: an unverifiable op resolves to `unknown`, never a silent success
+    assert r.state == "unknown"
+    assert r.operation is not None and "unattested" in (r.operation.note or "")
 
 
 def test_ledger_off_resolves_but_does_not_persist():

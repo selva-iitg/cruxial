@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxial"
-version = "0.5.3"
+version = "0.5.4"
 description = "The action layer for AI agents. Proof of what your agent actually did, not what it claimed: every tool call resolves from a receipt, so 'done' is evidence, not a guess."
 readme = "README.md"
 license = { text = "MIT" }
