@@ -4,6 +4,11 @@ All notable changes to Cruxial are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-07-16
+
+### Changed
+- **Fail-open is now visible, not silent.** When Cruxial's own action-layer stage crashes (a genuine Cruxial-internal failure — receipt adapters and verify hooks already fail-open one level down), the operation is recorded as `unknown` with an `"unattested: action-layer stage failed"` note, instead of being silently recorded as a success. The host is unaffected: the tool's value still returns and `ok` stays `True` (fail-open availability is preserved, and even a failure while *recording* the hole cannot break the host). This closes an audit gap two production reviewers independently flagged: a fail-open that records success hides the hole exactly on the runs where Cruxial misbehaved, which is when the record matters most. High-stakes paths can still fail closed with `GuardConfig(fail_open=False)` (re-raises), unchanged.
+
 ## [0.5.3] — 2026-06-23
 
 ### Added
@@ -117,6 +122,7 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
+[0.5.4]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.4
 [0.5.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.3
 [0.5.2]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.2
 [0.5.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.1

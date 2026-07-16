@@ -477,6 +477,40 @@ class Cruxial:
             ok=True, tool=name, value=value, latency_ms=perf_ms_since(start_ns),
         )
 
+    def _record_unattested(
+        self, name: str, args: dict[str, Any], value: Any, start_ns: int, exc: BaseException
+    ) -> ExecutionResult:
+        """Fail-open, but VISIBLE. The action-layer stage itself crashed, so we
+        can't confirm the action — the host still runs (the tool's value returns),
+        but the op is recorded as `unknown` with a note, never a silent success.
+        This is the case where Cruxial itself misbehaved, which is exactly when
+        you most want the hole to show up in the ledger instead of being dressed
+        as a green check. (Only instrumented tools reach here; uninstrumented
+        ones took the 0.4 path already.)"""
+        now = utc_now()
+        op = Operation(
+            op_id=new_op_id(),
+            tool=name,
+            state="unknown",
+            ts_intent=now,
+            actor=self.config.actor,
+            requested=args or None,
+            receipt=None,
+            note=f"unattested: action-layer stage failed ({type(exc).__name__})",
+            ts_resolved=now,
+        )
+        if self.config.ledger:
+            self._ledger.append(op)
+        self._record(
+            tool=name, status="passed", failure=None, args=args,
+            latency_ns=start_ns, schema_hash=self._schema_hashes.get(name, "-"),
+            repaired=False,
+        )
+        return ExecutionResult(
+            ok=True, tool=name, value=value, receipt=None, state="unknown",
+            op_id=op.op_id, operation=op, latency_ms=perf_ms_since(start_ns),
+        )
+
     # ── v0.5: receipt → verify → resolve → ledger (the action layer) ─────────
 
     def _instrumented(self, name: str) -> bool:
@@ -507,10 +541,16 @@ class Cruxial:
                 raise
             warnings.warn(
                 f"cruxial: action-layer stage failed for {name!r} "
-                f"({type(exc).__name__}: {exc}); passing the tool result through.",
+                f"({type(exc).__name__}: {exc}); recording the op as unattested "
+                f"(state=unknown) and passing the tool result through.",
                 stacklevel=2,
             )
-            return self._record_success(name, args, value, start_ns)
+            try:
+                return self._record_unattested(name, args, value, start_ns, exc)
+            except Exception:  # noqa: BLE001 — even recording the hole failed; the host must still run
+                return ExecutionResult(
+                    ok=True, tool=name, value=value, latency_ms=perf_ms_since(start_ns),
+                )
 
     async def _afinalize(
         self, name: str, args: dict[str, Any], value: Any, start_ns: int
@@ -528,10 +568,16 @@ class Cruxial:
                 raise
             warnings.warn(
                 f"cruxial: action-layer stage failed for {name!r} "
-                f"({type(exc).__name__}: {exc}); passing the tool result through.",
+                f"({type(exc).__name__}: {exc}); recording the op as unattested "
+                f"(state=unknown) and passing the tool result through.",
                 stacklevel=2,
             )
-            return self._record_success(name, args, value, start_ns)
+            try:
+                return self._record_unattested(name, args, value, start_ns, exc)
+            except Exception:  # noqa: BLE001 — even recording the hole failed; the host must still run
+                return ExecutionResult(
+                    ok=True, tool=name, value=value, latency_ms=perf_ms_since(start_ns),
+                )
 
     def _emit_operation(
         self,
