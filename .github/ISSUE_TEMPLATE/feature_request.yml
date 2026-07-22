@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Cruxial stays small and dependency-light on purpose. The best proposals
-        keep that constraint — see [CONTRIBUTING.md](https://github.com/cruxial-ai/cruxial/blob/main/CONTRIBUTING.md).
+        keep that constraint — see [CONTRIBUTING.md](https://github.com/selva-iitg/cruxial/blob/main/CONTRIBUTING.md).
   - type: textarea
     id: problem
     attributes:

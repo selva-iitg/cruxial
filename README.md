@@ -1,6 +1,6 @@
 # Cruxial
 
-[![tests](https://github.com/cruxial-ai/cruxial/actions/workflows/tests.yml/badge.svg)](https://github.com/cruxial-ai/cruxial/actions/workflows/tests.yml)
+[![tests](https://github.com/selva-iitg/cruxial/actions/workflows/tests.yml/badge.svg)](https://github.com/selva-iitg/cruxial/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/cruxial.svg?label=pypi&color=blue)](https://pypi.org/project/cruxial/)
 [![Python](https://img.shields.io/pypi/pyversions/cruxial.svg)](https://pypi.org/project/cruxial/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -26,7 +26,7 @@ Then watch it catch every failure category live, offline, no API key:
 cruxial demo
 ```
 
-![cruxial demo catching every failure category offline, then showing the repair prompt](https://raw.githubusercontent.com/cruxial-ai/cruxial/main/assets/cruxial-demo.gif)
+![cruxial demo catching every failure category offline, then showing the repair prompt](https://raw.githubusercontent.com/selva-iitg/cruxial/main/assets/cruxial-demo.gif)
 
 ## When not to use Cruxial yet
 
@@ -397,7 +397,7 @@ Coming:
 
 ## Questions or feedback?
 
-Open a [GitHub issue](https://github.com/cruxial-ai/cruxial/issues), or reach the maintainers on [Discord](https://discord.gg/qJu7yq54s). We'd especially like to hear from anyone running Cruxial in a real agent. Early design-partner feedback shapes the roadmap.
+Open a [GitHub issue](https://github.com/selva-iitg/cruxial/issues), or reach the maintainers on [Discord](https://discord.gg/qJu7yq54s). We'd especially like to hear from anyone running Cruxial in a real agent. Early design-partner feedback shapes the roadmap.
 
 ## License
 

@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for the report. A minimal repro is worth ten paragraphs.
-        **Security issue?** Don't file here — follow [SECURITY.md](https://github.com/cruxial-ai/cruxial/blob/main/SECURITY.md).
+        **Security issue?** Don't file here — follow [SECURITY.md](https://github.com/selva-iitg/cruxial/blob/main/SECURITY.md).
   - type: textarea
     id: what-happened
     attributes:

@@ -890,7 +890,7 @@ DEMO_PROMPTS: list[dict[str, str]] = [
     # ── demo_create_pull_request (4) ────────────────────────────────
     {
         "text": (
-            "Open a PR in cruxial-ai/cruxial-sdk from branch feat/runtime-register "
+            "Open a PR in selva-iitg/cruxial-sdk from branch feat/runtime-register "
             "into main. Title: 'Add runtime tool registration', reviewers: "
             "selva and arnav. Labels: feature, refactor. Not a draft."
         ),

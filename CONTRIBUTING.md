@@ -6,14 +6,14 @@ the style of the surrounding code.
 
 ## Reporting bugs & ideas
 
-Found a bug or have an idea? [Open an issue](https://github.com/cruxial-ai/cruxial/issues)
+Found a bug or have an idea? [Open an issue](https://github.com/selva-iitg/cruxial/issues)
 with a minimal repro, your `cruxial` and Python versions, and the failure category if
 relevant. **Security issues:** don't file a public issue — follow [SECURITY.md](SECURITY.md).
 
 ## Dev setup
 
 ```bash
-git clone https://github.com/cruxial-ai/cruxial.git
+git clone https://github.com/selva-iitg/cruxial.git
 cd cruxial
 python3 -m venv .venv
 source .venv/bin/activate

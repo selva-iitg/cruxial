@@ -60,8 +60,8 @@ cruxial = "cruxial.cli:main"
 
 [project.urls]
 Homepage = "https://cruxial.ai"
-Repository = "https://github.com/cruxial-ai/cruxial"
-Issues = "https://github.com/cruxial-ai/cruxial/issues"
+Repository = "https://github.com/selva-iitg/cruxial"
+Issues = "https://github.com/selva-iitg/cruxial/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cruxial"]

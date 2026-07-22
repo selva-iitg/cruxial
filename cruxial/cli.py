@@ -479,7 +479,7 @@ def cmd_demo() -> int:
     print(dim("    • mark side-effects:      ") + "@cruxial.action  +  cruxial.receipt(...)")
     print(dim("    • see what agents DID:    ") + "cruxial view")
     print(dim("    • see your live rate:     ") + "cruxial stats")
-    print(dim("    • full guide:             ") + "https://github.com/cruxial-ai/cruxial#readme")
+    print(dim("    • full guide:             ") + "https://github.com/selva-iitg/cruxial#readme")
     print()
     return 0
 

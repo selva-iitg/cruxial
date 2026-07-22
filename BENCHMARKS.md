@@ -445,7 +445,7 @@ Every benchmark above runs from `pip install cruxial` + Python ≥ 3.10.
 
 ```bash
 # clone
-git clone https://github.com/cruxial-ai/cruxial.git && cd cruxial
+git clone https://github.com/selva-iitg/cruxial.git && cd cruxial
 
 # install
 pip install -e '.[mcp,openai]'

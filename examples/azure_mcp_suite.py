@@ -128,8 +128,8 @@ PROMPTS: dict[str, list[str]] = {
         "Fill the search input with 'cruxial'",
     ],
     "github": [
-        "List my recent pull requests in the cruxial-ai/cruxial repo",
-        "Create an issue in cruxial-ai/cruxial titled 'MCP benchmark complete'",
+        "List my recent pull requests in the selva-iitg/cruxial repo",
+        "Create an issue in selva-iitg/cruxial titled 'MCP benchmark complete'",
         "Search for issues mentioning 'tool call hallucination' across GitHub",
     ],
     "slack": [
@@ -183,11 +183,11 @@ PROMPTS: dict[str, list[str]] = {
         "Search records in the 'Deals' table where stage equals 'closed-won' for the last 30 days",
     ],
     "github": [
-        "Create an issue in cruxial-ai/cruxial titled 'V0.1 launched: MCP support' with the body containing details about the release",
-        "Open a pull request from feat/mcp-adapter into main in cruxial-ai/cruxial with title 'Ship MCP adapter'",
-        "Add a review comment on PR #42 in cruxial-ai/cruxial: 'Looks good, approved'",
-        "Search code in cruxial-ai/cruxial for any usage of 'auto_repair_batch'",
-        "Create a new branch called 'v0.1-release' from main in cruxial-ai/cruxial",
+        "Create an issue in selva-iitg/cruxial titled 'V0.1 launched: MCP support' with the body containing details about the release",
+        "Open a pull request from feat/mcp-adapter into main in selva-iitg/cruxial with title 'Ship MCP adapter'",
+        "Add a review comment on PR #42 in selva-iitg/cruxial: 'Looks good, approved'",
+        "Search code in selva-iitg/cruxial for any usage of 'auto_repair_batch'",
+        "Create a new branch called 'v0.1-release' from main in selva-iitg/cruxial",
     ],
     "slack": [
         "Post 'Cruxial V0.1 is shipping today, MCP support included' to the #engineering channel",
@@ -357,11 +357,11 @@ PROMPTS: dict[str, list[str]] = {
         "Hover over the third nav menu item and click the dropdown that appears",
     ],
     "github": [
-        "Create an issue in cruxial-ai/cruxial titled 'V0.1 launched: MCP support' with the body containing details about the release",
-        "Open a pull request from feat/mcp-adapter into main in cruxial-ai/cruxial with title 'Ship MCP adapter'",
-        "Add a review comment on PR #42 in cruxial-ai/cruxial: 'Looks good, approved'",
-        "Search code in cruxial-ai/cruxial for any usage of 'auto_repair_batch'",
-        "Create a new branch called 'v0.1-release' from main in cruxial-ai/cruxial",
+        "Create an issue in selva-iitg/cruxial titled 'V0.1 launched: MCP support' with the body containing details about the release",
+        "Open a pull request from feat/mcp-adapter into main in selva-iitg/cruxial with title 'Ship MCP adapter'",
+        "Add a review comment on PR #42 in selva-iitg/cruxial: 'Looks good, approved'",
+        "Search code in selva-iitg/cruxial for any usage of 'auto_repair_batch'",
+        "Create a new branch called 'v0.1-release' from main in selva-iitg/cruxial",
     ],
 
     # ── Launch-comprehensive additions ───────────────────────────────
@@ -386,15 +386,15 @@ PROMPTS: dict[str, list[str]] = {
 
     # ── 30-server launch run — additional 15 servers ──────────────────
     "gitlab": [
-        "Create a new GitLab merge request in project cruxial-ai/sdk from feat/runtime-register into main titled 'Add runtime registration'",
-        "List all open issues in cruxial-ai/sdk assigned to me with label 'bug'",
-        "Add a comment to merge request ID 42 in project cruxial-ai/sdk: 'Looks good, approving'",
-        "Search code in project cruxial-ai/sdk for any usage of 'auto_repair_batch'",
-        "Create a new branch 'v0.1-release' from main in project cruxial-ai/sdk",
+        "Create a new GitLab merge request in project selva-iitg/sdk from feat/runtime-register into main titled 'Add runtime registration'",
+        "List all open issues in selva-iitg/sdk assigned to me with label 'bug'",
+        "Add a comment to merge request ID 42 in project selva-iitg/sdk: 'Looks good, approving'",
+        "Search code in project selva-iitg/sdk for any usage of 'auto_repair_batch'",
+        "Create a new branch 'v0.1-release' from main in project selva-iitg/sdk",
     ],
     "circleci": [
-        "List recent pipelines for project github/cruxial-ai/cruxial in branch main",
-        "Get the status of the most recent workflow in project cruxial-ai/cruxial",
+        "List recent pipelines for project github/selva-iitg/cruxial in branch main",
+        "Get the status of the most recent workflow in project selva-iitg/cruxial",
         "Rerun the failed jobs in workflow ID wf_xyz789",
         "Cancel pipeline ID pipe_abc123 with the reason 'duplicate run'",
     ],

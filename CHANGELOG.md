@@ -122,15 +122,15 @@ First release since 0.2.0 — the 0.2.1 work (bypass-precision robustness, `exec
 ### Added
 - Initial release. `guard()` interceptor: JSON-Schema validation, 7 failure categories, 1-attempt auto-repair, fail-open by default. Adapters for OpenAI / Azure OpenAI / Anthropic / LiteLLM / MCP. Local SQLite + stdout telemetry, `cruxial stats` CLI, schema linter, synthetic-payload testing helpers.
 
-[0.5.4]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.4
-[0.5.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.3
-[0.5.2]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.2
-[0.5.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.1
-[0.5.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.5.0
-[0.4.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.4.0
-[0.3.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.3.0
-[0.2.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.2.0
-[0.1.3]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.3
-[0.1.2]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.2
-[0.1.1]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.1
-[0.1.0]: https://github.com/cruxial-ai/cruxial/releases/tag/v0.1.0
+[0.5.4]: https://github.com/selva-iitg/cruxial/releases/tag/v0.5.4
+[0.5.3]: https://github.com/selva-iitg/cruxial/releases/tag/v0.5.3
+[0.5.2]: https://github.com/selva-iitg/cruxial/releases/tag/v0.5.2
+[0.5.1]: https://github.com/selva-iitg/cruxial/releases/tag/v0.5.1
+[0.5.0]: https://github.com/selva-iitg/cruxial/releases/tag/v0.5.0
+[0.4.0]: https://github.com/selva-iitg/cruxial/releases/tag/v0.4.0
+[0.3.0]: https://github.com/selva-iitg/cruxial/releases/tag/v0.3.0
+[0.2.0]: https://github.com/selva-iitg/cruxial/releases/tag/v0.2.0
+[0.1.3]: https://github.com/selva-iitg/cruxial/releases/tag/v0.1.3
+[0.1.2]: https://github.com/selva-iitg/cruxial/releases/tag/v0.1.2
+[0.1.1]: https://github.com/selva-iitg/cruxial/releases/tag/v0.1.1
+[0.1.0]: https://github.com/selva-iitg/cruxial/releases/tag/v0.1.0
