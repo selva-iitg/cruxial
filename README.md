@@ -401,4 +401,4 @@ Open a [GitHub issue](https://github.com/selva-iitg/cruxial/issues), or reach th
 
 ## License
 
-MIT. The SDK runs entirely in your process. The hosted dashboard (Cruxial Cloud) will be a separate paid product. The interceptor itself stays MIT forever.
+MIT. The SDK runs entirely in your process. The interceptor stays MIT forever.
